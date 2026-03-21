@@ -37,6 +37,7 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "icon": [
+      "icons/icon.icns",
       "../assets/icon.ico",
       "../assets/icon.png"
     ],
