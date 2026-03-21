@@ -37,11 +37,11 @@ jobs:
         run: npm run tauri build -- --bundles app,dmg
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: macos-build
           path: |
             src-tauri/target/release/bundle/macos/*.app
             src-tauri/target/release/bundle/macos/*.app.tar.gz
             src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
-            src-tauri/target/release/bundle/macos/*.dmg
+            src-tauri/target/release/bundle/dmg/*.dmg
