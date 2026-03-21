@@ -19,13 +19,15 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies
+        env:
+          YOUTUBE_DL_SKIP_DOWNLOAD: "true"
         run: npm ci
 
       - name: Build Tauri (macOS)
