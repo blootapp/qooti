@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Qooti License Admin</title>
+  <link rel="stylesheet" href="admin.css" />
+</head>
+<body>
+  <div class="admin">
+    <header class="admin__header">
+      <h1 class="admin__title">Qooti License Admin</h1>
+      <p class="admin__subtitle">Control room for license management</p>
+    </header>
+
+    <nav class="admin__tabs" role="tablist">
+      <button type="button" class="admin__tab is-active" data-tab="licenses" role="tab">Licenses</button>
+      <button type="button" class="admin__tab" data-tab="create" role="tab">Create License</button>
+      <button type="button" class="admin__tab" data-tab="notifications" role="tab">Notifications</button>
+      <button type="button" class="admin__tab hidden" data-tab="details" role="tab" id="tabDetails">Details</button>
+      <button type="button" class="admin__tab" data-tab="logs" role="tab">Admin Logs</button>
+      <button type="button" class="admin__tab" data-tab="settings" role="tab">Settings</button>
+    </nav>
+
+    <!-- Tab: Licenses (default) -->
+    <section id="panelLicenses" class="admin__panel is-active" role="tabpanel">
+      <div class="panel__toolbar">
+        <form id="licensesFilterForm" class="panel__search">
+          <input type="text" id="licensesLicenseKey" placeholder="License key (exact match)" autocomplete="off" />
+          <select id="licensesStatus">
+            <option value="">All statuses</option>
+            <option value="valid">Valid</option>
+            <option value="expired">Expired</option>
+            <option value="revoked">Revoked</option>
+          </select>
+          <select id="licensesPlan">
+            <option value="">All plans</option>
+            <option value="lifetime">Lifetime</option>
+            <option value="yearly">Yearly</option>
+          </select>
+          <select id="licensesExpirationWindow">
+            <option value="">Any expiration</option>
+            <option value="expiring_7">Expiring in next 7 days</option>
+            <option value="expiring_30">Expiring in next 30 days</option>
+            <option value="expired">Already expired</option>
+          </select>
+          <select id="licensesDeviceLimitState">
+            <option value="">Any device state</option>
+            <option value="at_limit">At limit</option>
+            <option value="over_limit">Over limit</option>
+          </select>
+          <button type="submit" id="licensesSearch" class="btn btn--primary">Search</button>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table class="admin__table">
+          <thead>
+            <tr>
+              <th>Key</th>
+              <th>Plan</th>
+              <th>Expires</th>
+              <th>Devices</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="licensesTableBody"><tr><td colspan="6" class="table-empty">Use filters to find specific licenses.<br>No data is loaded until you run a search.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="panel__pagination">
+        <span id="licensesPaginationInfo"></span>
+        <button type="button" id="licensesPrev" class="btn btn--secondary" disabled>Prev</button>
+        <button type="button" id="licensesNext" class="btn btn--secondary">Next</button>
+      </div>
+      <p id="licensesStatusMsg" class="status"></p>
+    </section>
+
+    <!-- Tab: Create License -->
+    <section id="panelCreate" class="admin__panel" role="tabpanel">
+      <form id="formCreate" class="admin__form">
+        <div class="form-row">
+          <label for="createPlanType">Plan</label>
+          <select id="createPlanType">
+            <option value="lifetime">Lifetime</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <div class="form-row" id="createDurationRow">
+          <label for="createDurationYears">Duration (years)</label>
+          <input type="number" id="createDurationYears" value="1" min="1" max="10" />
+        </div>
+        <div class="form-row">
+          <label for="createDeviceLimit">Device limit</label>
+          <input type="number" id="createDeviceLimit" value="3" min="1" max="99" />
+        </div>
+        <button type="submit" id="btnCreate" class="btn btn--primary">Generate license</button>
+      </form>
+      <div id="createResult" class="result-box hidden">
+        <p class="result-box__label">Generated key (copy and share):</p>
+        <pre id="createResultKey"></pre>
+        <button type="button" id="createCopyKey" class="btn btn--secondary">Copy</button>
+      </div>
+      <p id="createStatus" class="status"></p>
+    </section>
+
+    <!-- Tab: Notifications -->
+    <section id="panelNotifications" class="admin__panel" role="tabpanel">
+      <form id="formNotification" class="admin__form">
+        <div class="form-row">
+          <label for="notifyTitle">Title (optional)</label>
+          <input type="text" id="notifyTitle" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="notifyBody">Body <span class="required">*</span></label>
+          <input type="text" id="notifyBody" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="notifyYoutube">YouTube URL (optional)</label>
+          <input type="url" id="notifyYoutube" autocomplete="off" placeholder="https://www.youtube.com/watch?v=..." />
+        </div>
+        <div class="form-row">
+          <label for="notifyButtonText">Button text (optional)</label>
+          <input type="text" id="notifyButtonText" autocomplete="off" />
+        </div>
+        <div class="form-row">
+          <label for="notifyButtonLink">Button URL (optional)</label>
+          <input type="url" id="notifyButtonLink" autocomplete="off" placeholder="https://..." />
+        </div>
+        <div class="form-row">
+          <label for="notifyActive">Active</label>
+          <select id="notifyActive">
+            <option value="true" selected>Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </div>
+        <button type="submit" id="btnSendNotification" class="btn btn--primary">Send notification</button>
+      </form>
+      <p id="notifyStatus" class="status"></p>
+    </section>
+
+    <!-- Tab: License Details -->
+    <section id="panelDetails" class="admin__panel" role="tabpanel">
+      <div id="detailsContent" class="details-content hidden">
+        <div class="details__header">
+          <h2 id="detailsKey" class="details__key"></h2>
+          <span id="detailsStatus" class="badge"></span>
+        </div>
+        <div class="details__info">
+          <div class="details__row"><span class="details__label">Plan</span><span id="detailsPlan"></span></div>
+          <div class="details__row"><span class="details__label">Expires</span><span id="detailsExpires"></span></div>
+          <div class="details__row"><span class="details__label">Devices</span><span id="detailsDevices"></span></div>
+        </div>
+        <div class="details__actions">
+          <button type="button" id="detailsEdit" class="btn btn--secondary">Edit</button>
+          <button type="button" id="detailsResetDevices" class="btn btn--secondary">Reset all devices</button>
+          <button type="button" id="detailsRevoke" class="btn btn--danger">Revoke license</button>
+          <button type="button" id="detailsDelete" class="btn btn--danger hidden">Delete license</button>
+        </div>
+        <h3 class="details__subtitle">Active devices</h3>
+        <div class="table-wrap">
+          <table class="admin__table">
+            <thead>
+              <tr>
+                <th>Device</th>
+                <th>First seen</th>
+                <th>Last seen</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="detailsDevicesBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <p id="detailsEmpty" class="details-empty">Select a license from the list.</p>
+      <p id="detailsStatusMsg" class="status"></p>
+    </section>
+
+    <!-- Tab: Admin Logs -->
+    <section id="panelLogs" class="admin__panel" role="tabpanel">
+      <div class="panel__toolbar">
+        <button type="button" id="logsSearch" class="btn btn--primary">Load logs</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin__table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Action</th>
+              <th>License</th>
+              <th>Details</th>
+            </tr>
+          </thead>
+          <tbody id="logsTableBody"><tr><td colspan="4" class="table-empty">Click <strong>Load logs</strong> to fetch audit log.</td></tr></tbody>
+        </table>
+      </div>
+      <div class="panel__pagination">
+        <span id="logsPaginationInfo"></span>
+        <button type="button" id="logsPrev" class="btn btn--secondary" disabled>Prev</button>
+        <button type="button" id="logsNext" class="btn btn--secondary">Next</button>
+      </div>
+      <p id="logsStatusMsg" class="status"></p>
+    </section>
+
+    <!-- Tab: Settings -->
+    <section id="panelSettings" class="admin__panel" role="tabpanel">
+      <h2 class="panel__title">Configuration</h2>
+      <p class="admin__hint">Worker URL and admin secret are stored in this browser only (localStorage).</p>
+      <div class="form-row">
+        <label for="configBaseUrl">Worker base URL</label>
+        <input type="url" id="configBaseUrl" placeholder="https://your-worker.workers.dev" autocomplete="off" />
+      </div>
+      <div class="form-row">
+        <label for="configSecret">Admin secret</label>
+        <input type="password" id="configSecret" placeholder="X-Admin-Secret value" autocomplete="off" />
+      </div>
+      <div class="panel__actions">
+        <button type="button" id="btnSaveConfig" class="btn btn--primary">Save config</button>
+        <button type="button" id="btnResetConfig" class="btn btn--secondary">Reset</button>
+      </div>
+      <p id="configStatus" class="status"></p>
+    </section>
+  </div>
+
+  <!-- Edit modal -->
+  <div id="editModal" class="modal hidden">
+    <div class="modal__backdrop"></div>
+    <div class="modal__content">
+      <h3 class="modal__title">Edit license</h3>
+      <form id="formEdit">
+        <input type="hidden" id="editLicenseKey" />
+        <div class="form-row">
+          <label for="editPlanType">Plan</label>
+          <select id="editPlanType">
+            <option value="lifetime">Lifetime</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <div class="form-row" id="editDurationRow">
+          <label for="editDurationYears">Duration (years)</label>
+          <input type="number" id="editDurationYears" value="1" min="1" max="10" />
+        </div>
+        <div class="form-row">
+          <label for="editDeviceLimit">Device limit</label>
+          <input type="number" id="editDeviceLimit" value="3" min="1" max="99" />
+        </div>
+        <div class="modal__actions">
+          <button type="button" id="editCancel" class="btn btn--secondary">Cancel</button>
+          <button type="submit" id="editSave" class="btn btn--primary">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>

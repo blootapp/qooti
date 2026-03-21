@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Migrate from Telegram – Qooti</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      background: #060606;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* ── Modal ── */
+    .modal {
+      width: 620px;
+      background: #111112;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.07);
+      box-shadow:
+        0 0 0 0.5px rgba(0,0,0,0.95),
+        0 40px 100px rgba(0,0,0,0.9),
+        0 8px 24px rgba(0,0,0,0.6);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Title bar ── */
+    .titlebar {
+      height: 46px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      flex-shrink: 0;
+      position: relative;
+      background: #0e0e0f;
+    }
+
+    .titlebar-title {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.65);
+      letter-spacing: -0.01em;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+
+    .titlebar-left { flex: 1; }
+
+    .titlebar-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .tl {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      cursor: pointer;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .tl::after {
+      opacity: 0;
+      position: absolute;
+      font-weight: 900;
+      color: rgba(0,0,0,0.5);
+      transition: opacity 0.12s;
+    }
+
+    .titlebar-right:hover .tl::after { opacity: 1; }
+
+    .tl-max {
+      background: #28c840;
+      box-shadow: 0 0 0 0.5px rgba(0,0,0,0.3), inset 0 0.5px 0 rgba(255,255,255,0.18);
+    }
+    .tl-max::after { content: '⤢'; font-size: 7px; }
+
+    .tl-close {
+      background: #ff5f57;
+      box-shadow: 0 0 0 0.5px rgba(0,0,0,0.3), inset 0 0.5px 0 rgba(255,255,255,0.18);
+    }
+    .tl-close::after { content: '✕'; font-size: 6.5px; }
+
+    /* ── Body ── */
+    .modal-body {
+      padding: 26px 26px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    /* Header */
+    .header-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .tg-icon {
+      width: 44px;
+      height: 44px;
+      border-radius: 11px;
+      background: linear-gradient(145deg, #2AABEE, #1a8ccb);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 2px 14px rgba(42,171,238,0.22);
+    }
+
+    .tg-icon svg { width: 24px; height: 24px; fill: white; }
+
+    .header-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.88);
+      letter-spacing: -0.022em;
+      margin-bottom: 5px;
+      line-height: 1.3;
+    }
+
+    .header-sub {
+      font-size: 12.5px;
+      color: rgba(255,255,255,0.35);
+      letter-spacing: -0.005em;
+      line-height: 1.6;
+    }
+
+    /* Divider */
+    .divider { height: 1px; background: rgba(255,255,255,0.06); }
+
+    /* Section label */
+    .section-label {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.22);
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+
+    /* Steps */
+    .steps { display: flex; flex-direction: column; }
+
+    .step {
+      display: flex;
+      align-items: flex-start;
+      gap: 13px;
+      padding: 10px 10px;
+      border-radius: 9px;
+      transition: background 0.15s;
+      cursor: default;
+    }
+
+    .step:hover { background: rgba(255,255,255,0.03); }
+
+    .step-left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.09);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.3);
+    }
+
+    .step-line {
+      width: 1px;
+      min-height: 14px;
+      background: rgba(255,255,255,0.06);
+      margin-top: 4px;
+      flex: 1;
+    }
+
+    .step:last-child .step-line { display: none; }
+
+    .step-body { padding-top: 2px; }
+
+    .step-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.76);
+      letter-spacing: -0.015em;
+      margin-bottom: 3px;
+    }
+
+    .step-desc {
+      font-size: 12px;
+      color: rgba(255,255,255,0.34);
+      line-height: 1.65;
+      letter-spacing: -0.005em;
+    }
+
+    .step-desc code {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,0.55);
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.07);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .step-desc strong {
+      color: rgba(255,255,255,0.55);
+      font-weight: 500;
+    }
+
+    /* Tutorial card */
+    .tutorial-card {
+      border-radius: 9px;
+      background: #181819;
+      border: 1px solid rgba(255,255,255,0.06);
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+
+    .tutorial-card:hover {
+      background: #1d1d1f;
+      border-color: rgba(255,255,255,0.09);
+    }
+
+    .tutorial-thumb {
+      width: 84px;
+      height: 54px;
+      flex-shrink: 0;
+      background: linear-gradient(135deg, #2a0505 0%, #4a0e0e 60%, #2a0505 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .play-circle {
+      width: 26px;
+      height: 26px;
+      background: rgba(0,0,0,0.55);
+      backdrop-filter: blur(6px);
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.18);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, background 0.15s;
+    }
+
+    .tutorial-card:hover .play-circle {
+      transform: scale(1.1);
+      background: rgba(0,0,0,0.72);
+    }
+
+    .play-circle svg {
+      width: 9px;
+      height: 9px;
+      fill: rgba(255,255,255,0.9);
+      margin-left: 2px;
+    }
+
+    .tutorial-info {
+      padding: 0 15px;
+      flex: 1;
+    }
+
+    .tutorial-title {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: -0.01em;
+      margin-bottom: 3px;
+    }
+
+    .tutorial-meta {
+      font-size: 11px;
+      color: rgba(255,255,255,0.26);
+      letter-spacing: -0.005em;
+    }
+
+    .tutorial-arrow {
+      padding: 0 15px;
+      color: rgba(255,255,255,0.15);
+      font-size: 17px;
+    }
+
+    /* Note */
+    .note {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.2);
+      letter-spacing: -0.005em;
+    }
+
+    .note svg {
+      width: 11px;
+      height: 11px;
+      stroke: rgba(255,255,255,0.18);
+      fill: none;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    /* Footer */
+    .modal-footer {
+      display: flex;
+      gap: 9px;
+      padding: 0 26px 22px;
+    }
+
+    .btn {
+      flex: 1;
+      height: 34px;
+      border-radius: 7px;
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      letter-spacing: -0.01em;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+
+    .btn:active { transform: scale(0.97); }
+
+    .btn-cancel {
+      background: rgba(255,255,255,0.06);
+      color: rgba(255,255,255,0.55);
+      border: 1px solid rgba(255,255,255,0.07);
+    }
+
+    .btn-cancel:hover { background: rgba(255,255,255,0.09); }
+
+    .btn-primary {
+      background: #1a6be8;
+      color: #fff;
+      font-weight: 600;
+      box-shadow: 0 1px 8px rgba(26,107,232,0.35);
+    }
+
+    .btn-primary:hover {
+      background: #2478f5;
+      box-shadow: 0 2px 14px rgba(26,107,232,0.5);
+    }
+
+    /* Video overlay */
+    .video-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.88);
+      backdrop-filter: blur(16px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+
+    .video-overlay.active { opacity: 1; pointer-events: all; }
+
+    .video-wrapper {
+      width: 700px;
+      max-width: 90vw;
+      background: #000;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 24px 80px rgba(0,0,0,0.9);
+      border: 1px solid rgba(255,255,255,0.08);
+      transform: scale(0.94);
+      transition: transform 0.28s cubic-bezier(0.34,1.4,0.64,1);
+    }
+
+    .video-overlay.active .video-wrapper { transform: scale(1); }
+
+    .video-wrapper iframe {
+      width: 100%;
+      aspect-ratio: 16/9;
+      display: block;
+      border: none;
+    }
+
+    .video-close {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+      width: 30px;
+      height: 30px;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 50%;
+      color: rgba(255,255,255,0.7);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    .video-close:hover { background: rgba(255,255,255,0.15); }
+  </style>
+</head>
+<body>
+
+  <div class="modal">
+
+    <!-- Title bar -->
+    <div class="titlebar">
+      <div class="titlebar-left"></div>
+      <span class="titlebar-title">Migrate from Telegram</span>
+      <div class="titlebar-right">
+        <div class="tl tl-max"></div>
+        <div class="tl tl-close"></div>
+      </div>
+    </div>
+
+    <!-- Body -->
+    <div class="modal-body">
+
+      <!-- Header -->
+      <div class="header-row">
+        <div class="tg-icon">
+          <svg viewBox="0 0 24 24"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.894 8.221l-1.97 9.28c-.145.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.03 13.617l-2.95-.924c-.64-.203-.654-.64.136-.954l11.57-4.461c.537-.194 1.006.131.832.943z"/></svg>
+        </div>
+        <div>
+          <div class="header-title">Import your Telegram chat history into Qooti</div>
+          <div class="header-sub">Export your data from Telegram Desktop in three steps, then select the folder to start importing your media into Qooti.</div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Steps -->
+      <div>
+        <div class="section-label">How it works</div>
+        <div class="steps">
+
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">1</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Export your chat history from Telegram Desktop</div>
+              <div class="step-desc">Open Telegram Desktop → go to your chat or channel → click the <strong>⋯ menu</strong> → select <strong>Export Chat History</strong>. Enable <strong>media files</strong> (photos, videos, GIFs) before confirming.</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">2</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Leave the exported folder exactly as it is</div>
+              <div class="step-desc">Don't rename, move, or modify any files. Qooti needs the folder to contain <code>result.json</code> alongside your media files to process the import correctly.</div>
+            </div>
+          </div>
+
+          <div class="step">
+            <div class="step-left">
+              <div class="step-num">3</div>
+              <div class="step-line"></div>
+            </div>
+            <div class="step-body">
+              <div class="step-title">Select the folder to begin importing</div>
+              <div class="step-desc">Click <strong>Select folder</strong> below, choose the exported folder, and Qooti will automatically read and import your messages and media.</div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="note">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="9,12 11,14 15,10"/></svg>
+        Supported: images, videos, and GIFs from Telegram exports.
+      </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="modal-footer">
+      <button class="btn btn-cancel">Cancel</button>
+      <button class="btn btn-primary">Select folder</button>
+    </div>
+
+  </div>
+
+</body>
+</html>

@@ -1,0 +1,953 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>qooti</title>
+    <style>
+      html, body {
+        margin: 0;
+        min-height: 100%;
+        background: #0a0a0c;
+        color: #e7eaf0;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      #app {
+        min-height: 100vh;
+        background: #0a0a0c;
+      }
+    </style>
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./vendor/cropper.css" />
+  </head>
+  <body>
+    <div id="app" class="app app--booting">
+      <!-- Custom Title Bar -->
+      <header class="title-bar">
+        <div class="title-bar__brand" data-tauri-drag-region>
+          <span class="title-bar__title">qooti</span>
+        </div>
+        <div class="title-bar__spacer" data-tauri-drag-region></div>
+        <div class="window-controls">
+          <button id="btnWindowMinimize" class="window-control window-control--minimize" data-i18n-title="titleBar.minimize" title="Minimize" type="button" data-i18n-aria-label="titleBar.minimize" aria-label="Minimize"></button>
+          <button id="btnWindowMaximize" class="window-control window-control--maximize" data-i18n-title="titleBar.maximize" title="Maximize" type="button" data-i18n-aria-label="titleBar.maximize" aria-label="Maximize"></button>
+          <button id="btnWindowClose" class="window-control window-control--close" data-i18n-title="titleBar.close" title="Close" type="button" data-i18n-aria-label="titleBar.close" aria-label="Close"></button>
+        </div>
+      </header>
+
+      <!-- Boot loading (shown while checking license) -->
+      <section id="bootView" class="boot-view" aria-label="Loading" aria-live="polite">
+        <div class="boot-view__bg" aria-hidden="true"></div>
+        <div class="boot-view__inner">
+          <img class="boot-view__logo" src="assets/logo.png" alt="" />
+          <p id="bootViewStatus" class="boot-view__status" data-i18n="boot.checkingLicense">Checking license…</p>
+          <div class="boot-view__spinner" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <!-- License gate (full-screen when no valid license) -->
+      <section id="licenseView" class="license-view" aria-label="License activation">
+        <div class="license-view__bg" aria-hidden="true"></div>
+        <div class="license-view__inner">
+          <div class="license-view__brand">
+            <img class="license-view__logo" src="assets/logo.png" alt="" />
+            <h1 class="license-view__title">Qooti</h1>
+            <p id="licenseViewSubtitle" class="license-view__subtitle" data-i18n="license.enterKey">Enter your license key to continue</p>
+          </div>
+          <form id="licenseForm" class="license-form" novalidate>
+            <input type="text" id="licenseKeyInput" class="license-form__input" data-i18n-placeholder="license.placeholder" placeholder="Paste your key (e.g. QOOTI-XXXX-XXXX-XXXX)" autocomplete="off" spellcheck="false" />
+            <p id="licenseError" class="license-form__error hidden" role="alert"></p>
+            <div class="license-form__actions">
+              <button type="submit" id="licenseActivateBtn" class="license-form__submit">
+                <span class="license-form__submit-text" data-i18n="license.activate">Activate</span>
+                <span class="ui-icon ui-icon--sm license-form__submit-arrow" style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
+              </button>
+              <button type="button" id="licenseRetryBtn" class="btn btn--secondary license-form__retry hidden" data-i18n="license.retryCheck">Retry check</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="profileSetupView" class="profile-setup-view hidden" aria-label="Profile setup">
+        <div class="profile-setup-view__bg" aria-hidden="true"></div>
+        <button type="button" id="profileSetupLangToggle" class="language-toggle language-toggle--profile" title="Switch language" aria-label="Switch language">
+          <span class="ui-icon language-toggle__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+        </button>
+        <div class="profile-setup-view__inner">
+          <div class="profile-setup-view__avatar-wrap">
+            <button id="profileSetupAvatarBtn" type="button" class="profile-setup-view__avatar-btn" data-i18n-aria-label="profileSetup.uploadImage" aria-label="Upload profile image">
+              <span id="profileSetupAvatarPreview" class="profile-avatar profile-avatar--setup" aria-hidden="true"></span>
+            </button>
+            <p class="profile-setup-view__avatar-hint" data-i18n="profileSetup.uploadImage">Click to upload image</p>
+            <input id="profileSetupImageInput" type="file" accept="image/*" class="profile-setup-view__image-input" />
+          </div>
+
+          <div class="profile-setup-view__name-wrap">
+            <label for="profileSetupName" class="profile-setup-view__label" data-i18n="profileSetup.username">Username</label>
+            <input id="profileSetupName" type="text" maxlength="30" autocomplete="off" class="profile-setup-view__input" data-i18n-placeholder="profileSetup.placeholder" placeholder="Enter your username" />
+            <p id="profileSetupError" class="profile-setup-view__error hidden"></p>
+          </div>
+
+          <div class="profile-setup-view__actions">
+            <button id="profileSetupSaveBtn" type="button" class="btn btn--primary" disabled data-i18n="profileSetup.continue">Continue</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="surveyView" class="survey-view hidden" aria-label="Onboarding survey">
+        <div class="survey-view__bg" aria-hidden="true"></div>
+        <button type="button" id="surveyLangToggle" class="language-toggle" title="Switch language" aria-label="Switch language">
+          <span class="ui-icon language-toggle__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+        </button>
+        <div class="survey-view__inner">
+          <div id="surveySteps" class="survey-view__steps">
+            <div class="survey-view__step" data-step="0" aria-hidden="true">
+              <div class="survey-view__shell">
+                <div class="survey-view__header">
+                  <div class="survey-view__meta">
+                    <p class="survey-view__eyebrow" data-i18n="survey.eyebrow">Set up your Qooti experience</p>
+                    <p id="surveyProgress" class="survey-view__progress" aria-live="polite">1 / 5</p>
+                  </div>
+                  <div class="survey-view__bar" aria-hidden="true">
+                    <span id="surveyProgressFill" class="survey-view__bar-fill"></span>
+                  </div>
+                </div>
+                <div class="survey-view__body">
+                  <h2 id="surveyQuestionTitle" class="survey-view__question">What kind of creative work do you do most?</h2>
+                  <p id="surveyQuestionHint" class="survey-view__hint">Choose the option that feels closest to your day-to-day creative work.</p>
+                  <div id="surveyOptions" class="survey-view__options" role="list"></div>
+                </div>
+                <div class="survey-view__actions">
+                  <button id="surveyBackBtn" type="button" class="btn btn--secondary survey-view__back hidden" data-i18n="survey.back">Back</button>
+                  <button id="surveyNextBtn" type="button" class="btn btn--primary survey-view__next" disabled data-i18n="survey.next">Next</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div id="surveySuccessScreen" class="survey-view__success hidden" aria-hidden="true">
+            <div class="survey-view__shell survey-view__shell--success">
+              <div class="survey-view__header">
+                <div class="survey-view__meta">
+                  <p class="survey-view__eyebrow" data-i18n="survey.eyebrow">Set up your Qooti experience</p>
+                  <p class="survey-view__progress" data-i18n="survey.collections">Collections</p>
+                </div>
+                <div class="survey-view__bar" aria-hidden="true">
+                  <span class="survey-view__bar-fill survey-view__bar-fill--full"></span>
+                </div>
+              </div>
+              <div class="survey-view__body">
+                <h2 class="survey-view__success-title" data-i18n="survey.successTitle">Great — let's set up your inspiration library.</h2>
+                <p class="survey-view__success-hint" data-i18n="survey.successHint">Everything is listed below. We’ve already checked the collections that match your creative interests.</p>
+                <div id="surveyRecommendedList" class="survey-view__recommended" role="list"></div>
+              </div>
+              <div class="survey-view__actions survey-view__actions--success">
+                <button id="surveyContinueBtn" type="button" class="btn btn--primary survey-view__continue" data-i18n="survey.continue">Continue</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Main app (hidden until license valid) -->
+      <div class="app__main">
+      <!-- Main Toolbar -->
+      <header class="topbar">
+        <div class="topbar__left">
+          <button id="btnMenu" class="btn-icon" data-i18n-title="menu.menu" title="Menu"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/menu-line.svg')" aria-hidden="true"></span></button>
+          <img class="brand__logo" src="assets/logo.png" alt="qooti" />
+        </div>
+
+        <div class="topbar__center">
+          <div class="search" id="searchContainer">
+            <div class="search__wrapper">
+              <button id="btnColorFilter" class="search__color-trigger" type="button" data-i18n-title="topbar.filterByColor" title="Filter by color" data-i18n-aria-label="topbar.filterByColor" aria-label="Filter by color" aria-haspopup="dialog" aria-expanded="false">
+                <span id="colorFilterIcon" class="search__color-icon ui-icon" style="--icon-url:url('assets/icons/remix/palette.svg')" aria-hidden="true"></span>
+                <span id="colorFilterSwatch" class="search__color-swatch hidden" aria-hidden="true"></span>
+              </button>
+              <input id="searchInput" class="search__input" type="text" data-i18n-placeholder="topbar.search" placeholder="Search…" spellcheck="false" autocomplete="off" />
+              <button id="searchDownloadBtn" class="search__download-btn hidden" title="Download video and save to qooti" aria-label="Download video">
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
+                Download
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar__right">
+          <button id="btnAdd" class="btn-icon" data-i18n-title="topbar.add" title="Add" data-i18n-aria-label="topbar.add" aria-label="Add"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/add-line.svg')" aria-hidden="true"></span></button>
+          <div class="collections-trigger-wrap" id="collectionsTriggerWrap">
+            <button id="btnNavCollections" class="btn-icon collections-trigger" type="button" data-i18n-title="menu.collections" title="Collections" data-i18n-aria-label="menu.collections" aria-label="Collections" aria-haspopup="menu" aria-expanded="false">
+              <span class="ui-icon" style="--icon-url:url('assets/icons/remix/bookmark.svg')" aria-hidden="true"></span>
+            </button>
+          </div>
+          <button id="btnNotifications" class="btn-icon notification-trigger" data-i18n-title="topbar.notifications" title="Notifications" data-i18n-aria-label="topbar.notifications" aria-label="Notifications" aria-haspopup="menu" aria-expanded="false">
+            <span id="btnNotificationsIcon" class="ui-icon" style="--icon-url:url('assets/icons/remix/bell.svg')" aria-hidden="true"></span>
+            <span id="btnNotificationsBadge" class="notification-trigger__badge hidden" aria-hidden="true">0</span>
+          </button>
+          <span class="topbar__divider" aria-hidden="true"></span>
+          <button id="btnProfile" class="profile-trigger" data-i18n-title="topbar.profileMenu" title="Profile menu" data-i18n-aria-label="topbar.openProfile" aria-label="Open profile menu" aria-haspopup="menu" aria-expanded="false">
+            <span id="profileAvatar" class="profile-avatar" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Menu dropdown (hidden by default) -->
+      <div id="menuDropdown" class="dropdown hidden">
+        <button id="menuNavAll" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/shuffle-line.svg')" aria-hidden="true"></span><span data-i18n="menu.shuffleOrder">Shuffle order</span></button>
+        <div class="dropdown__divider"></div>
+        <button id="menuCollections" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/bookmark.svg')" aria-hidden="true"></span><span data-i18n="menu.collections">Collections</span></button>
+        <div class="dropdown__divider"></div>
+        <button id="menuMigrateTelegram" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/telegram.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateTelegram">Migrate from Telegram</span></button>
+        <button id="menuMigrateNotion" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateNotion">Migrate from Notion</span></button>
+        <div class="dropdown__divider"></div>
+        <button id="menuHistory" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/history-line.svg')" aria-hidden="true"></span><span data-i18n="menu.history">History</span></button>
+      </div>
+
+      <div id="colorPickerPopover" class="color-picker-popover hidden" role="dialog" data-i18n-aria-label="colorPicker.chooseColor" aria-label="Choose color">
+        <div class="color-picker-saturation-wrap">
+          <div id="colorPickerSaturation" class="color-picker-saturation">
+            <span id="colorPickerThumb" class="color-picker-thumb"></span>
+          </div>
+        </div>
+        <div class="color-picker-toolbar">
+          <div id="colorPickerPreview" class="color-picker-preview" aria-hidden="true"></div>
+          <div class="color-picker-hex-wrap">
+            <input type="text" id="colorPickerHex" class="color-picker-hex" value="#ff0000" spellcheck="false" aria-label="Hex color" />
+          </div>
+          <button type="button" id="colorPickerCopyBtn" class="color-picker-copy-btn" aria-label="Copy hex color" title="Copy hex color">
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+          </button>
+        </div>
+        <div class="color-picker-section-label" data-i18n="colorPicker.hue">Hue</div>
+        <div class="color-picker-hue-wrap">
+          <input type="range" id="colorPickerHue" class="color-picker-hue" min="0" max="360" value="0" aria-label="Hue" />
+        </div>
+        <div class="color-picker-divider" aria-hidden="true"></div>
+        <div class="color-picker-section-label" data-i18n="colorPicker.recent">Recent</div>
+        <div id="colorPickerRecent" class="color-picker-recent"></div>
+        <div class="color-picker-actions">
+          <button type="button" id="colorPickerClearBtn" class="color-picker-clear-btn" data-i18n="colorPicker.clear">Clear</button>
+          <button type="button" id="colorPickerSearchBtn" class="color-picker-search-btn" data-i18n="colorPicker.search">Search</button>
+        </div>
+      </div>
+      <div id="collectionsDropdown" class="dropdown dropdown--collections hidden" role="menu" aria-label="Collections">
+        <div class="profile-menu__header">
+          <div class="profile-menu__name" data-i18n="menu.collections">Collections</div>
+        </div>
+        <div class="dropdown__divider"></div>
+        <div id="collectionsDropdownList" class="collections-panel__list"></div>
+        <div id="collectionsDropdownEmpty" class="collections-panel__empty hidden" data-i18n="collections.noCollections">No collections yet.</div>
+      </div>
+      <div id="profileDropdown" class="dropdown dropdown--profile hidden" role="menu" aria-label="Profile menu">
+        <div class="profile-menu__header">
+          <div id="profileMenuAvatar" class="profile-avatar profile-avatar--lg" aria-hidden="true"></div>
+          <div class="profile-menu__meta">
+            <div id="profileMenuName" class="profile-menu__name">User</div>
+            <div class="profile-menu__subtitle" data-i18n="profile.localUser">Local user</div>
+          </div>
+        </div>
+        <div class="dropdown__divider"></div>
+        <button id="profileTabAccount" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/user-line.svg')" aria-hidden="true"></span><span data-i18n="profile.account">Account</span></button>
+        <button id="profileTabAppearance" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span><span data-i18n="profile.appearance">Appearance</span></button>
+        <button id="profileTabConnections" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.connections">Connections</span></button>
+        <button id="profileTabDownloads" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.downloads">Downloads</span></button>
+        <button id="profileTabDiscovery" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.discovery">Discovery</span></button>
+        <button id="profileTabTags" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.tags">Tags</span></button>
+        <button id="profileTabLanguage" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span><span data-i18n="profile.language">Language</span></button>
+        <button id="profileTabLicense" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="profile.license">Update</span></button>
+        <button id="profileTabHelp" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span><span data-i18n="profile.tutorials">Tutorials</span></button>
+        <div class="dropdown__divider"></div>
+        <button id="profileSendFeedback" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.support">Support</span></button>
+      </div>
+
+      <div id="notificationDropdown" class="dropdown dropdown--notifications hidden" role="menu" aria-label="Notifications">
+        <div class="notification-panel">
+          <div class="notification-panel__header">
+            <div class="notification-panel__title" data-i18n="notifications.title">Notifications</div>
+            <div id="notificationUnreadLabel" class="notification-panel__meta hidden" data-i18n="notifications.new">0 new</div>
+          </div>
+          <div id="notificationList" class="notification-panel__list"></div>
+          <div id="notificationEmpty" class="notification-panel__empty hidden" data-i18n="notifications.empty">No notifications yet.</div>
+        </div>
+      </div>
+
+      <!-- Add surface (unified add overlay) -->
+      <div id="addSurface" class="add-surface hidden">
+        <div class="add-surface__backdrop"></div>
+        <div class="add-surface__content">
+          <button id="addSurfaceClose" class="add-surface__close" data-i18n-title="add.close" title="Close" data-i18n-aria-label="add.close" aria-label="Close">
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
+          </button>
+          <!-- Default zone (drop/paste) -->
+          <div class="add-surface__zone" id="addZone">
+            <div class="add-surface__hint" data-i18n="add.dropOrPaste">Drop or paste anything</div>
+            <input id="addInput" class="add-surface__input" type="text" data-i18n-placeholder="add.pasteLink" placeholder="Paste a link…" autocomplete="off" />
+            <button id="addBrowse" class="add-surface__browse" data-i18n="add.browseFiles">or browse files</button>
+            <div class="add-surface__import-options" data-i18n-aria-label="add.importOptions" aria-label="Import options">
+              <div class="add-surface__import-title" data-i18n="add.importOptions">Import options</div>
+              <div class="add-surface__import-actions">
+                <button id="addImportMediaBtn" type="button" class="btn btn--secondary" data-i18n="add.importMedia">Import media files</button>
+                <button id="addImportQootiBtn" type="button" class="btn btn--secondary" data-i18n="add.importQooti">Import .qooti package</button>
+                <button id="addImportTelegramBtn" type="button" class="btn btn--secondary" data-i18n="add.importTelegram">Import Telegram export</button>
+                <button id="addImportNotionBtn" type="button" class="btn btn--secondary" data-i18n="add.importNotion">Import from Notion</button>
+              </div>
+              <p class="add-surface__import-hint" data-i18n="add.importHint">Drag and drop media files, .qooti files, or a Telegram export folder.</p>
+            </div>
+          </div>
+          <!-- Link preview (hidden by default) -->
+          <div class="add-surface__preview hidden" id="addPreview">
+            <!-- Preview Section -->
+            <div class="add-surface__preview-thumb-wrap">
+              <img id="previewThumb" class="add-surface__preview-thumb" alt="" />
+              <span id="previewPlatformBadge" class="add-surface__badge add-surface__badge--platform"></span>
+              <span id="previewDurationBadge" class="add-surface__badge add-surface__badge--duration hidden"></span>
+            </div>
+            <!-- Info Section -->
+            <div class="add-surface__info">
+              <div id="previewTitle" class="add-surface__preview-title"></div>
+              <div class="add-surface__source-row">
+                <span id="previewSource" class="add-surface__source"></span>
+                <button type="button" id="previewCopyLink" class="add-surface__copy-link" data-i18n-title="add.copyLink" title="Copy link" data-i18n-aria-label="add.copyLink" aria-label="Copy link">
+                  <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
+            <!-- Action Section -->
+            <div class="add-surface__actions">
+              <div class="add-surface__actions-primary">
+                <span id="previewRecommended" class="add-surface__recommended hidden" data-i18n="add.recommended">Recommended</span>
+                <button id="previewDownloadVideo" class="btn btn--primary add-surface__btn-primary hidden" type="button" data-i18n="add.downloadVideo">Download video</button>
+                <button id="previewConfirm" class="btn btn--primary add-surface__btn-primary" type="button" data-i18n="add.addAsLink">Add as link</button>
+                <div id="previewDownloading" class="add-surface__downloading hidden">
+                  <span class="add-surface__spinner"></span>
+                  <span data-i18n="add.downloading">Downloading…</span>
+                </div>
+              </div>
+              <div id="previewSecondaryActions" class="add-surface__actions-secondary hidden">
+                <button id="previewAddThumb" class="btn btn--secondary" type="button" data-i18n="add.addThumbnail">Add thumbnail</button>
+                <button id="previewAddAsLink" class="btn btn--secondary" type="button" data-i18n="add.addAsLink">Add as link</button>
+              </div>
+              <button id="previewCancel" class="add-surface__cancel" type="button" data-i18n="add.cancel">Cancel</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="shell">
+        <main class="main">
+          <!-- Selection action bar (hidden by default, appears on selection) -->
+          <div id="selectionBar" class="selection-bar hidden">
+            <span id="selectionCount" class="selection-bar__count"></span>
+            <button id="btnAddToCollection" class="btn-icon" data-i18n-title="selection.addToCollection" title="Add to collection"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span></button>
+            <button id="btnDeleteSelected" class="btn-icon btn-icon--danger" data-i18n-title="selection.delete" title="Delete"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/delete-bin-6-line.svg')" aria-hidden="true"></span></button>
+            <button id="btnClearSelection" class="btn-icon" data-i18n-title="selection.clearSelection" title="Clear selection"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span></button>
+          </div>
+
+          <!-- Collection view bar: back + breadcrumb when viewing a single collection -->
+          <div id="collectionViewBar" class="collection-view-bar hidden" aria-label="Collection navigation">
+            <button type="button" id="btnBackFromCollection" class="collection-view-bar__back" data-i18n-title="collectionNav.backToCollections" title="Back to Collections" data-i18n-aria-label="collectionNav.backToCollections" aria-label="Back to Collections">
+              <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+            </button>
+            <div class="collection-view-bar__breadcrumb">
+              <span id="collectionViewBarCollectionsLink" class="collection-view-bar__segment" role="button" tabindex="0" data-i18n-title="collectionNav.backToCollections" title="Back to Collections" data-i18n="collectionNav.collections">Collections</span>
+              <span class="collection-view-bar__sep" aria-hidden="true">›</span>
+              <span id="collectionViewBarName" class="collection-view-bar__name"></span>
+            </div>
+          </div>
+
+          <!-- Tag filter bar (YouTube-style top tags) -->
+          <div id="tagFilterBar" class="tag-filter-bar" aria-label="Filter by tag">
+            <div class="tag-filter-bar__scroll">
+              <button type="button" id="tagFilterAll" class="tag-filter-pill is-active" data-tag-id="" aria-pressed="true" data-i18n="tagFilter.all">All</button>
+              <button type="button" id="tagFilterRecent" class="tag-filter-pill" data-filter="recent" aria-pressed="false" data-i18n="tagFilter.recent">Recent</button>
+              <div id="tagFilterPills" class="tag-filter-pills"></div>
+              <span id="tagFilterBackfillIndicator" class="tag-filter-bar__backfill-indicator hidden" aria-live="polite" data-i18n="tagFilter.preparing">Preparing tag filters…</span>
+            </div>
+          </div>
+
+          <section id="gridView" class="grid-view">
+            <div id="emptyState" class="empty-state hidden">
+              <p class="empty-state__text" data-i18n="empty.noInspirations">No inspirations yet.</p>
+              <p class="empty-state__hint" data-i18n="empty.hint">Add links (paste + Enter), browse files, or download videos from YouTube/Instagram.</p>
+            </div>
+            <section id="longFormSection1" class="gallery-section gallery-section--long">
+              <div id="longFormGrid1" class="grid grid--long-form"></div>
+            </section>
+            <section id="shortFormSection" class="gallery-section gallery-section--short">
+              <div id="shortFormGrid" class="short-form-grid"></div>
+              <div class="short-form-controls">
+                <button id="shortFormToggleBtn" type="button" class="short-form-toggle hidden" data-short-toggle aria-expanded="false" data-i18n="grid.showMore">Show more</button>
+              </div>
+            </section>
+            <section id="longFormSection2" class="gallery-section gallery-section--long">
+              <div id="longFormGrid2" class="grid grid--long-form"></div>
+            </section>
+            <div id="gridLazySentinel" class="grid-lazy-sentinel" aria-hidden="true"></div>
+            <div id="gridLazySpinner" class="grid-lazy-spinner hidden" aria-label="Loading more">
+              <span class="grid-lazy-spinner__dot"></span>
+              <span class="grid-lazy-spinner__dot"></span>
+              <span class="grid-lazy-spinner__dot"></span>
+            </div>
+          </section>
+
+          <section id="historyView" class="history-view hidden" aria-label="History">
+            <header class="history-header">
+              <button id="btnBackFromHistory" class="history-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div class="history-header__main">
+                <h1 class="history-header__title" data-i18n="history.title">History</h1>
+                <p class="history-header__subtitle" data-i18n="history.subtitle">Recently added media</p>
+              </div>
+              <div class="history-header__meta">
+                <span id="historyCount" class="history-header__count"></span>
+                <div class="history-filter-wrap">
+                  <input type="hidden" id="historyFilter" value="all" />
+                  <button type="button" id="historyFilterTrigger" class="history-header__filter-trigger" data-i18n-aria-label="history.filterBySource" aria-label="Filter by source" aria-haspopup="listbox" aria-expanded="false" aria-controls="historyFilterDropdown">
+                    <span class="history-header__filter-label" data-i18n="history.allSources">All sources</span>
+                    <span class="ui-icon ui-icon--sm history-header__filter-chevron" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
+                  </button>
+                  <div id="historyFilterDropdown" class="history-header__filter-dropdown" role="listbox" aria-hidden="true" tabindex="-1">
+                    <button type="button" role="option" data-value="all">All sources</button>
+                    <button type="button" role="option" data-value="local">Local</button>
+                    <button type="button" role="option" data-value="youtube.com">YouTube</button>
+                    <button type="button" role="option" data-value="instagram.com">Instagram</button>
+                    <button type="button" role="option" data-value="tiktok.com">TikTok</button>
+                    <button type="button" role="option" data-value="pinterest.com">Pinterest</button>
+                    <button type="button" role="option" data-value="notion">Notion</button>
+                  </div>
+                </div>
+                <input type="search" id="historySearch" class="history-header__search" data-i18n-placeholder="history.searchPlaceholder" placeholder="Search history…" data-i18n-aria-label="history.searchInHistory" aria-label="Search history" />
+              </div>
+            </header>
+            <div id="historyContent" class="history-content">
+              <div id="historyList" class="history-list"></div>
+            </div>
+          </section>
+
+          <section id="collectionsView" class="collections-view hidden" aria-label="Collections">
+            <header class="collections-header">
+              <button id="btnBackFromCollections" class="collections-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div class="collections-header__main">
+                <h1 class="collections-header__title" data-i18n="collectionsView.title">Collections</h1>
+              </div>
+              <div class="collections-header__meta">
+                <span id="collectionsCount" class="collections-header__count" aria-live="polite"></span>
+                <input type="search" id="collectionsSearch" class="collections-header__search" data-i18n-placeholder="collectionsView.searchPlaceholder" placeholder="Search collections…" data-i18n-aria-label="collectionsView.searchPlaceholder" aria-label="Search collections" />
+                <button id="collectionsImportBtn" type="button" class="btn btn--secondary collections-header__import" data-i18n="collectionsView.importPack">Import Pack</button>
+                <button id="collectionsCreateBtn" type="button" class="btn btn--primary collections-header__create" data-i18n="collectionsView.createCollection">Create Collection</button>
+              </div>
+            </header>
+            <div id="collectionsContent" class="collections-content">
+              <div id="collectionsGrid" class="collections-grid"></div>
+              <div id="collectionsEmpty" class="collections-empty hidden">
+                <p class="collections-empty__title" data-i18n="collectionsView.noCollections">No collections yet</p>
+                <p class="collections-empty__hint" data-i18n="collectionsView.emptyHint">Create your first collection to start organizing inspirations.</p>
+              </div>
+            </div>
+          </section>
+
+          <section id="telegramMigrationView" class="telegram-migration-view hidden" aria-label="Migrate from Telegram">
+            <header class="telegram-migration-header">
+              <button id="btnBackFromTelegramMigration" class="telegram-migration-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div class="telegram-migration-header__main">
+                <h1 class="telegram-migration-header__title" data-i18n="telegram.title">Migrate from Telegram</h1>
+                <p class="telegram-migration-header__subtitle" data-i18n="telegram.subtitle">Import your Telegram chat history into Qooti</p>
+              </div>
+            </header>
+            <div id="telegramMigrationContent" class="telegram-migration-content"></div>
+          </section>
+
+          <section id="notionImportView" class="telegram-migration-view hidden" aria-label="Import from Notion">
+            <header class="telegram-migration-header">
+              <button id="btnBackFromNotionImport" class="telegram-migration-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div class="telegram-migration-header__main">
+                <h1 class="telegram-migration-header__title" data-i18n="notion.title">Import from Notion</h1>
+                <p class="telegram-migration-header__subtitle" data-i18n="notion.subtitle">Import media from a public Notion page</p>
+              </div>
+            </header>
+            <div id="notionImportContent" class="telegram-migration-content"></div>
+          </section>
+
+          <section id="settingsView" class="settings-view hidden">
+            <header class="settings-header">
+              <button id="btnBackFromSettings" class="settings-header__back" data-i18n-title="settings.back" title="Back (Esc)" data-i18n-aria-label="common.back" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <h1 class="settings-header__title" data-i18n="settings.title">Settings</h1>
+            </header>
+            <div class="settings-layout">
+              <div class="settings-surface">
+                <nav class="settings-nav" role="tablist" data-i18n-aria-label="settings.sectionsLabel" aria-label="Settings sections">
+                  <button type="button" class="settings-nav__item is-active" data-tab="account" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/user-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.account">Account</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="appearance" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.appearance">Appearance</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="connections" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.connections">Connections</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="downloads" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.downloads">Downloads</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="discovery" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.discovery">Discovery</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="tags" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.tags">Tags</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="language" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.language">Language</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="license" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.license">Update</span>
+                  </button>
+                  <button type="button" class="settings-nav__item" data-tab="help" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.help">Tutorials</span>
+                  </button>
+                </nav>
+                <div class="settings-content">
+                <div id="settingsPanelAccount" class="settings-panel is-active" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.account">Account</h2>
+                  <div class="settings-group">
+                    <div class="settings-account-card">
+                      <button type="button" id="settingsAccountAvatarBtn" class="settings-account-avatar-btn" data-i18n-aria-label="settings.updateProfilePicture" aria-label="Update profile picture">
+                        <span id="settingsAccountAvatar" class="profile-avatar settings-account-avatar" aria-hidden="true"></span>
+                      </button>
+                      <div class="settings-account-card__meta">
+                        <div class="settings-account-card__title" data-i18n="settings.profilePicture">Profile picture</div>
+                        <div class="settings-account-card__hint" data-i18n="settings.profilePictureHint">Click the avatar to update it.</div>
+                      </div>
+                      <input id="settingsAccountAvatarInput" type="file" accept="image/*" class="hidden" />
+                    </div>
+                    <div class="settings-field settings-field--stacked">
+                      <label class="settings-field__label" for="settingsAccountUsernameInput" data-i18n="settings.username">Username</label>
+                      <div class="settings-account-name-row">
+                        <input id="settingsAccountUsernameInput" type="text" maxlength="30" class="settings-field__control settings-account-name-input" data-i18n-placeholder="profileSetup.placeholder" placeholder="Enter your username" />
+                        <button type="button" id="settingsAccountUsernameSave" class="btn btn--sm" data-i18n="settings.saveUsername">Save</button>
+                      </div>
+                    </div>
+                    <div class="settings-info settings-account-license" id="licenseInfoBlock">
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.plan">Plan</span><span id="settingsLicensePlan" class="settings-info__value">—</span></div>
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.activated">Activated</span><span id="settingsLicenseActivated" class="settings-info__value">—</span></div>
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.expires">Expires</span><span id="settingsLicenseExpires" class="settings-info__value">—</span></div>
+                      <div class="settings-info__row" id="settingsLicenseStatusRow"><span class="settings-info__key" data-i18n="settings.status">Status</span><span id="settingsLicenseStatus" class="settings-info__value">—</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelAppearance" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.appearance">Appearance</h2>
+                  <div class="settings-group">
+                    <div class="settings-field">
+                      <label class="settings-field__label" for="settingTheme" data-i18n="settings.theme">Theme</label>
+                      <div class="settings-theme-row">
+                        <select id="settingTheme" class="settings-field__control">
+                          <option value="system" data-i18n="settings.theme.system">System</option>
+                          <option value="light" data-i18n="settings.theme.light" disabled>Light</option>
+                          <option value="dark" data-i18n="settings.theme.dark">Dark</option>
+                        </select>
+                        <span id="settingThemeLightLocked" class="settings-theme-locked" title="Light mode is locked for now" aria-hidden="true">
+                          <span class="ui-icon ui-icon--sm settings-theme-locked__icon" style="--icon-url:url('assets/icons/remix/git-repository-private-fill.svg')" aria-hidden="true"></span>
+                          <span data-i18n="settings.theme.lightLocked">Light (locked)</span>
+                        </span>
+                      </div>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingEnableTagFilters" data-i18n="settings.enableTagFilters">Enable tag filters</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingEnableTagFilters" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingUseSimpleSizeControl" data-i18n="settings.useSimpleSizeControl">Use simple size control</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingUseSimpleSizeControl" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div id="settingsSimpleSizeControls" class="settings-size-controls">
+                      <div class="settings-field">
+                        <label class="settings-field__label" for="settingUiScalePercent" data-i18n="settings.size">Size</label>
+                        <div class="settings-size-slider-row">
+                          <button type="button" id="settingUiScaleMinus" class="btn btn--sm btn--secondary">−</button>
+                          <input type="range" id="settingUiScalePercent" class="settings-field__control settings-field__range" min="80" max="130" step="5" value="100" />
+                          <button type="button" id="settingUiScalePlus" class="btn btn--sm btn--secondary">+</button>
+                          <span id="settingUiScalePercentValue" class="settings-size-value">100%</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div id="settingsAdvancedSizeControls" class="settings-size-controls hidden">
+                      <div class="settings-field">
+                        <label class="settings-field__label" data-i18n="settings.mediaCardSize">Media card size</label>
+                        <select id="settingCardSize" class="settings-field__control">
+                          <option value="small" data-i18n="settings.small">Small</option>
+                          <option value="medium" data-i18n="settings.medium">Medium</option>
+                          <option value="large" data-i18n="settings.large">Large</option>
+                        </select>
+                      </div>
+                      <div class="settings-field">
+                        <label class="settings-field__label" data-i18n="settings.mediaTitleSize">Media title size</label>
+                        <select id="settingMediaTitleSize" class="settings-field__control">
+                          <option value="small" data-i18n="settings.small">Small</option>
+                          <option value="medium" data-i18n="settings.medium">Medium</option>
+                          <option value="large" data-i18n="settings.large">Large</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="settings-field">
+                      <label class="settings-field__label" data-i18n="settings.gridDensity">Grid density</label>
+                      <select id="settingGridDensity" class="settings-field__control">
+                        <option value="compact" data-i18n="settings.compact">Compact</option>
+                        <option value="comfortable" data-i18n="settings.comfortable">Comfortable</option>
+                      </select>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingShowTitlesOnHover" data-i18n="settings.showTitlesOnHover">Show titles only when hovered</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingShowTitlesOnHover" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingShowSourceLabels" data-i18n="settings.showSourceLabels">Show source labels</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingShowSourceLabels" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingShowCollectionIndicator" data-i18n="settings.showCollectionIndicator">Show collection indicator</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingShowCollectionIndicator" class="settings-toggle" /><span class="settings-toggle__track"></span></label>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelConnections" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.connections">Connections</h2>
+                  <div class="settings-group">
+                    <div class="settings-info">
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.mobileConnectionCode">Mobile connection code</span><span id="settingsMobileCode" class="settings-info__value settings-info__value--mono">—</span></div>
+                    </div>
+                    <div class="settings-field">
+                      <img id="settingsMobileQr" alt="Mobile connection QR code" class="settings-mobile-qr hidden" />
+                    </div>
+                    <div class="settings-field">
+                      <button type="button" id="settingsMobileCopyCode" class="btn btn--sm" data-i18n="settings.copyMobileCode">Copy mobile code</button>
+                    </div>
+                    <div class="settings-info" style="margin-top: 14px;">
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.extensionStatus">Extension status</span><span id="extensionStatus" class="settings-info__value">—</span></div>
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.lastConnection">Last connection</span><span id="extensionLastConnection" class="settings-info__value">—</span></div>
+                      <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.connectionKey">Connection key</span><span id="extensionKeyDisplay" class="settings-info__value settings-info__value--mono">—</span></div>
+                    </div>
+                    <div class="settings-field" style="margin-top: 12px;">
+                      <button type="button" id="extensionCopyKey" class="btn btn--sm" data-i18n="settings.copyKey">Copy key</button>
+                      <button type="button" id="extensionRegenerateKey" class="btn btn--sm btn--secondary" style="margin-left: 8px;" data-i18n="settings.regenerateKey">Regenerate key</button>
+                    </div>
+                    <p class="settings-license__hint" style="margin-top: 12px;" data-i18n="settings.extensionHint">Use this key in the Qooti browser extension. Regenerating invalidates previous keys.</p>
+                  </div>
+                </div>
+                <div id="settingsPanelDownloads" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.downloads">Downloads</h2>
+                  <div class="settings-group">
+                    <div class="settings-field">
+                      <label class="settings-field__label" data-i18n="settings.videoDownloadQuality">Preferred video download quality</label>
+                      <select id="settingDownloadQualityMode" class="settings-field__control">
+                        <option value="best" data-i18n="settings.quality.best">Highest</option>
+                        <option value="balanced" data-i18n="settings.quality.balanced">High</option>
+                        <option value="fast" data-i18n="settings.quality.fast">Medium</option>
+                      </select>
+                    </div>
+                    <p class="settings-license__hint" data-i18n="settings.downloadQualityHint">Images are always downloaded in the highest available quality.</p>
+                  </div>
+                </div>
+                <div id="settingsPanelDiscovery" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.discovery">Related &amp; Discovery</h2>
+                  <div class="settings-group">
+                    <div class="settings-field">
+                      <label class="settings-field__label" data-i18n="settings.discoveryDepth">Discovery depth</label>
+                      <select id="settingRelatedStrictness" class="settings-field__control">
+                        <option value="strict" data-i18n="settings.depth.focused">Focused</option>
+                        <option value="balanced" data-i18n="settings.depth.balanced">Balanced</option>
+                        <option value="loose" data-i18n="settings.depth.broad">Broad</option>
+                      </select>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingRelatedPreferSameOrientation" data-i18n="settings.preferSameOrientation">Prefer same orientation</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingRelatedPreferSameOrientation" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingRelatedPreferSameMediaType" data-i18n="settings.preferSameMediaType">Prefer same media type</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingRelatedPreferSameMediaType" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelTags" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.tags">Tags &amp; Quick Tags</h2>
+                  <div class="settings-group">
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingQuickTagsDefaultEnabled" data-i18n="settings.showDefaultQuickTags">Show default quick tags</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingQuickTagsDefaultEnabled" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingShowQuickTagsInToast" data-i18n="settings.showQuickTagsInToast">Show quick tags in notifications</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingShowQuickTagsInToast" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div class="settings-field">
+                      <label class="settings-field__label" data-i18n="settings.customQuickTags">Custom quick tags</label>
+                      <div class="settings-field__tags">
+                        <input type="text" id="settingQuickTagsCustomInput" class="settings-field__control" data-i18n-placeholder="settings.addTagPlaceholder" placeholder="Add tag, then Enter" />
+                        <div id="settingQuickTagsCustomList" class="settings-tag-list"></div>
+                      </div>
+                    </div>
+                    <div class="settings-field">
+                      <label class="settings-field__label" for="settingRunFullOcr" data-i18n="settings.fullOcr">Run full OCR indexing</label>
+                      <div class="settings-field__stack">
+                        <button type="button" id="settingRunFullOcr" class="btn btn--sm" data-i18n="settings.fullOcr">Run full OCR indexing</button>
+                        <div class="settings-field__hint" data-i18n="settings.fullOcrHint">Queue OCR for media that has never been processed or currently has no saved OCR text.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelLanguage" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title" data-i18n="settings.panel.language">Language</h2>
+                  <div class="settings-group">
+                    <div class="settings-field">
+                      <label class="settings-field__label" for="settingLanguage" data-i18n="settings.appLanguage">App language</label>
+                      <select id="settingLanguage" class="settings-field__control">
+                        <option value="en" data-i18n="settings.lang.en">English</option>
+                        <option value="uz" data-i18n="settings.lang.uz">Uzbek</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelLicense" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title"><span class="ui-icon settings-panel__title-icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="settings.panel.license">Update</span></h2>
+                  <div class="settings-group">
+                    <div class="settings-update-card">
+                      <div class="settings-update-card__body">
+                        <div id="settingsUpdateStatusLabel" class="settings-update-card__title" data-i18n="settings.upToDate">The app is up to date.</div>
+                        <div id="settingsUpdateStatusMeta" class="settings-update-card__meta">—</div>
+                      </div>
+                      <button type="button" id="settingsCheckForUpdates" class="btn btn--sm" data-i18n="settings.checkForUpdates">Check for updates</button>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelHelp" class="settings-panel settings-panel--coming" role="tabpanel">
+                  <div class="settings-coming">
+                    <div class="settings-coming__backdrop" aria-hidden="true">
+                      <div class="settings-coming__ghost settings-coming__ghost--hero"></div>
+                      <div class="settings-coming__ghost-row">
+                        <div class="settings-coming__ghost settings-coming__ghost--field"></div>
+                        <div class="settings-coming__ghost settings-coming__ghost--button"></div>
+                      </div>
+                      <div class="settings-coming__ghost settings-coming__ghost--card"></div>
+                      <div class="settings-coming__ghost-row">
+                        <div class="settings-coming__ghost settings-coming__ghost--short"></div>
+                        <div class="settings-coming__ghost settings-coming__ghost--button"></div>
+                      </div>
+                    </div>
+                    <div class="settings-coming__content">
+                      <span class="ui-icon settings-coming__icon" style="--icon-url:url('assets/icons/remix/eye-off-line.svg')" aria-hidden="true"></span>
+                      <div class="settings-coming__title" data-i18n="settings.tutorialsComing">Coming</div>
+                    </div>
+                  </div>
+                </div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section id="historyView" class="history-view hidden" aria-label="History">
+            <header class="history-header">
+              <button id="btnBackFromHistory" class="history-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <h1 class="history-header__title" data-i18n="history.title">History</h1>
+            </header>
+            <div class="history-page-header">
+              <div class="history-page-header__top">
+                <p class="history-page-header__subtitle" data-i18n="history.subtitle">Recently added media</p>
+                <span id="historyCount" class="history-page-header__count" aria-live="polite"></span>
+              </div>
+              <div class="history-page-header__controls">
+                <select id="historyFilter" class="history-filter" data-i18n-aria-label="history.filterBySource" aria-label="Filter by source">
+                  <option value="" data-i18n="history.allSources">All sources</option>
+                  <option value="local" data-i18n="history.local">Local</option>
+                  <option value="youtube" data-i18n="history.youtube">YouTube</option>
+                  <option value="instagram" data-i18n="history.instagram">Instagram</option>
+                  <option value="tiktok" data-i18n="history.tiktok">TikTok</option>
+                  <option value="pinterest" data-i18n="history.pinterest">Pinterest</option>
+                  <option value="other" data-i18n="history.other">Other</option>
+                </select>
+                <input type="text" id="historySearch" class="history-search" data-i18n-placeholder="history.searchPlaceholder" placeholder="Search in history…" data-i18n-aria-label="history.searchInHistory" aria-label="Search in history" spellcheck="false" autocomplete="off" />
+              </div>
+            </div>
+            <div id="historyContent" class="history-content" role="list"></div>
+          </section>
+        </main>
+      </div>
+      </div>
+    </div>
+
+    <!-- Drop overlay: centered drop target, shown when dragging files -->
+    <div id="dropOverlay" class="drop-overlay hidden" aria-hidden="true">
+      <div class="drop-overlay__target">
+        <span class="ui-icon drop-overlay__icon" style="--icon-url:url('assets/icons/remix/upload-2-line.svg')" aria-hidden="true"></span>
+        <span class="drop-overlay__text" id="dropOverlayText" data-i18n="drop.dropToAdd">Drop to add to qooti</span>
+      </div>
+    </div>
+
+    <div id="modalRoot" class="modal-root hidden" aria-hidden="true"></div>
+    <div id="toast" class="toast">
+      <div class="toast__main">
+        <span class="toast__icon" aria-hidden="true">✓</span>
+        <span class="toast__text"></span>
+        <button type="button" class="toast__edit hidden" id="toastEditBtn" data-i18n="toast.edit">Edit</button>
+      </div>
+      <div id="toastExpand" class="toast__expand hidden">
+        <div class="toast__quick-tags">
+          <button type="button" class="toast__quick-tag" data-tag="ui">ui</button>
+          <button type="button" class="toast__quick-tag" data-tag="thumbnail">thumbnail</button>
+          <button type="button" class="toast__quick-tag" data-tag="poster">poster</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom download indicator (shown during video download) -->
+    <div id="downloadIndicator" class="download-indicator hidden" aria-hidden="true">
+      <div class="download-indicator__progress-ring">
+        <svg viewBox="0 0 36 36">
+          <circle class="download-indicator__ring-bg" cx="18" cy="18" r="16" fill="none" stroke-width="2" />
+          <circle class="download-indicator__ring-fill" cx="18" cy="18" r="16" fill="none" stroke-width="2" stroke-dasharray="100" stroke-dashoffset="100" />
+        </svg>
+      </div>
+      <span class="download-indicator__label" id="downloadIndicatorLabel" data-i18n="download.downloadingVideo">Downloading video…</span>
+      <span class="download-indicator__percent" id="downloadIndicatorPercent"></span>
+    </div>
+
+    <!-- Bottom OCR indexing indicator -->
+    <div id="ocrTaskIndicator" class="download-indicator download-indicator--ocr hidden" aria-hidden="true">
+      <div class="download-indicator__progress-ring">
+        <svg viewBox="0 0 36 36">
+          <circle class="download-indicator__ring-bg" cx="18" cy="18" r="16" fill="none" stroke-width="2" />
+          <circle class="download-indicator__ring-fill" cx="18" cy="18" r="16" fill="none" stroke-width="2" stroke-dasharray="100" stroke-dashoffset="100" />
+        </svg>
+      </div>
+      <span class="download-indicator__label" id="ocrTaskLabel" data-i18n="ocr.indexingImages">Indexing text in images...</span>
+      <span class="download-indicator__percent" id="ocrTaskPercent"></span>
+      <button type="button" class="download-indicator__hide-btn" id="ocrTaskHideBtn" data-i18n="ocr.hide">Hide</button>
+    </div>
+
+    <!-- Bottom app update indicator -->
+    <div id="updateIndicator" class="download-indicator download-indicator--update hidden" aria-hidden="true">
+      <div class="download-indicator__progress-ring">
+        <svg viewBox="0 0 36 36">
+          <circle class="download-indicator__ring-bg" cx="18" cy="18" r="16" fill="none" stroke-width="2" />
+          <circle class="download-indicator__ring-fill" cx="18" cy="18" r="16" fill="none" stroke-width="2" stroke-dasharray="100" stroke-dashoffset="100" />
+        </svg>
+      </div>
+      <div class="download-indicator__content">
+        <span class="download-indicator__label" id="updateIndicatorLabel">Checking for updates…</span>
+        <span class="download-indicator__meta hidden" id="updateIndicatorMeta"></span>
+      </div>
+      <span class="download-indicator__percent" id="updateIndicatorPercent"></span>
+      <div class="download-indicator__actions hidden" id="updateIndicatorActions">
+        <button type="button" class="download-indicator__btn download-indicator__btn--primary" id="updateIndicatorRestartBtn">Restart now</button>
+        <button type="button" class="download-indicator__btn" id="updateIndicatorLaterBtn">Later</button>
+      </div>
+      <button type="button" class="download-indicator__hide-btn" id="updateIndicatorHideBtn">Hide</button>
+    </div>
+
+    <!-- Media Preview — minimal, cinematic, content-first -->
+    <div id="mediaPreview" class="media-preview hidden">
+      <div class="media-preview__backdrop"></div>
+      <div class="media-preview__content">
+        <button id="mediaPreviewClose" class="media-preview__close" data-i18n-title="preview.closeEsc" title="Close (Esc)" data-i18n-aria-label="preview.close" aria-label="Close">
+          <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
+        </button>
+        <div class="media-preview__topbar">
+          <div class="media-preview__action-dock media-preview__action-dock--quick" id="mediaPreviewQuickActions">
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="copy" data-i18n-title="preview.copy" title="Copy file" data-i18n-aria-label="preview.copy" aria-label="Copy file">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="download" data-i18n-title="preview.download" title="Download" data-i18n-aria-label="preview.download" aria-label="Download">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="open-source" data-i18n-title="preview.openSource" title="Open source" data-i18n-aria-label="preview.openSource" aria-label="Open source">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/external-link-line.svg')" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <div class="media-preview__canvas-wrap">
+          <div class="media-preview__hero" id="mediaPreviewArea">
+            <div id="mediaPreviewExtracting" class="media-preview__extracting hidden">
+              <div class="media-preview__extracting-spinner"></div>
+              <span data-i18n="preview.extractingColors">Extracting colors…</span>
+            </div>
+          </div>
+        </div>
+        <div class="media-preview__reel-feed hidden" id="mediaPreviewReelFeed"></div>
+        <div id="mediaPreviewVideoTools" class="media-preview__video-tools hidden">
+          <div class="media-preview__timeline-wrap">
+            <input type="range" id="mediaPreviewTimeline" class="media-preview__timeline" min="0" max="100" value="0" step="0.1" data-i18n-title="preview.scrub" title="Scrub" />
+          </div>
+          <div class="media-preview__action-dock media-preview__action-dock--video">
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewStepBack" data-i18n-title="preview.stepBack" title="Back 1 second" data-i18n-aria-label="preview.stepBack" aria-label="Back 1 second">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewStepFwd" data-i18n-title="preview.stepForward" title="Forward 1 second" data-i18n-aria-label="preview.stepForward" aria-label="Forward 1 second">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewCopyFrame" data-i18n-title="preview.copyFrame" title="Copy frame" data-i18n-aria-label="preview.copyFrame" aria-label="Copy frame">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/image-line.svg')" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <div class="media-preview__bar">
+          <div class="media-preview__bar-left">
+            <div class="media-preview__meta">
+              <h2 class="media-preview__title" id="mediaPreviewTitle"></h2>
+              <span class="media-preview__badge" id="mediaPreviewBadge"></span>
+            </div>
+            <div class="media-preview__tags" id="mediaPreviewTags"></div>
+          </div>
+          <div class="media-preview__bar-right media-preview__action-dock">
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--primary" id="mediaPreviewAddToCollection" data-i18n-title="preview.addToCollection" title="Add to collection" data-i18n-aria-label="preview.addToCollection" aria-label="Add to collection">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewEditTags" data-i18n-title="preview.editTags" title="Edit tags" data-i18n-aria-label="preview.editTags" aria-label="Edit tags">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span>
+            </button>
+            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewFindRelated" data-i18n-title="preview.findRelated" title="Find related" data-i18n-aria-label="preview.findRelated" aria-label="Find related">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span>
+            </button>
+          </div>
+        </div>
+        <p class="media-preview__hint" id="mediaPreviewHint" data-i18n="preview.hint">Esc to close · Drag to copy</p>
+      </div>
+    </div>
+
+    <!-- Context menu for media items -->
+    <div id="contextMenu" class="context-menu hidden">
+      <div class="context-menu__content"></div>
+    </div>
+
+    <!-- Floating feedback button (always visible) -->
+    <button id="feedbackFab" type="button" class="feedback-fab" data-i18n-title="feedback.sendFeedback" title="Send feedback" data-i18n-aria-label="feedback.sendFeedback" aria-label="Send feedback">
+      <span class="ui-icon feedback-fab__icon" style="--icon-url:url('assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span>
+    </button>
+
+    <script src="./vendor/konva.min.js"></script>
+    <script src="./vendor/cropper.js"></script>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>
+

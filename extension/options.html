@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Qooti — Extension Settings</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --bg-elevated: #18181b;
+      --surface: #28282b;
+      --surface-input: #212124;
+      --text: #ffffff;
+      --text-secondary: #b3b3b3;
+      --muted: #71717a;
+      --border: #3a3a3d;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --shadow: 0 2px 12px rgba(0,0,0,0.3);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 20px 28px;
+      background: var(--bg-elevated);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header-brand img {
+      height: 28px;
+      width: 28px;
+      border-radius: 6px;
+    }
+    .header-brand span {
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: -0.02em;
+    }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .lang-label {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .header select {
+      padding: 6px 28px 6px 10px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='%23b3b3b3'%3E%3Cpath d='M2.5 4.5L6 8l3.5-3.5'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+    }
+    .header select:hover { border-color: var(--muted); }
+    .header select:focus { outline: none; border-color: var(--text-secondary); }
+
+    .main {
+      max-width: 520px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    .card:last-of-type { margin-bottom: 0; }
+
+    .card-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin: 0 0 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .field {
+      margin-bottom: 18px;
+    }
+    .field:last-child { margin-bottom: 0; }
+    .field label {
+      display: block;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+    .field input[type="text"],
+    .field input[type="password"],
+    .field select {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--surface-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      transition: border-color 0.15s ease;
+    }
+    .field input:hover,
+    .field select:hover { border-color: var(--muted); }
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--text-secondary);
+    }
+    .field input::placeholder { color: var(--muted); }
+
+    .hint {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+      line-height: 1.45;
+    }
+
+    .actions {
+      margin-top: 28px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    .btn-save {
+      padding: 10px 24px;
+      background: #ffffff;
+      color: #18181b;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: opacity 0.15s ease, transform 0.1s ease;
+    }
+    .btn-save:hover { opacity: 0.92; }
+    .btn-save:active { transform: scale(0.98); }
+    #status {
+      font-size: 13px;
+      color: var(--text-secondary);
+    }
+    #status.saved { color: var(--text-secondary); }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="header-brand">
+      <img src="icons/icon.png" alt="" />
+      <span data-i18n="title">Qooti</span>
+    </div>
+    <div class="header-actions">
+      <span class="lang-label" data-i18n="languageLabel">Language</span>
+      <select id="language">
+        <option value="en">English</option>
+        <option value="uz">Oʻzbek</option>
+      </select>
+    </div>
+  </header>
+
+  <main class="main">
+    <section class="card">
+      <h2 class="card-title" data-i18n="sectionDisplay">Add button display</h2>
+      <div class="field">
+        <label for="displayMode" data-i18n="labelDisplayMode">When to show “Add to Qooti”</label>
+        <select id="displayMode">
+          <option value="both" data-i18n="optBoth">Hover overlay + Context menu</option>
+          <option value="hover" data-i18n="optHover">Hover overlay only</option>
+          <option value="context" data-i18n="optContext">Context menu only</option>
+        </select>
+        <p class="hint" data-i18n="hintDisplayMode">Phase 1 only context menu is active; hover overlay comes in Phase 2.</p>
+      </div>
+      <div class="field">
+        <label for="popupPosition" data-i18n="labelPopupPosition">Popup position</label>
+        <select id="popupPosition">
+          <option value="top-right" data-i18n="optTopRight">Top right</option>
+          <option value="top-left" data-i18n="optTopLeft">Top left</option>
+          <option value="bottom-right" data-i18n="optBottomRight">Bottom right</option>
+          <option value="bottom-left" data-i18n="optBottomLeft">Bottom left</option>
+        </select>
+        <p class="hint" data-i18n="hintPopupPosition">Which corner of the media the add-button popup appears in.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2 class="card-title" data-i18n="sectionDesktop">Desktop app</h2>
+      <div class="field">
+        <label for="desktopUrl" data-i18n="labelDesktopUrl">Qooti desktop URL</label>
+        <input type="text" id="desktopUrl" placeholder="http://127.0.0.1:1420" />
+        <p class="hint" data-i18n="hintDesktopUrl">The extension sends media to this address. Desktop app must be running.</p>
+      </div>
+      <div class="field">
+        <label for="connectionKey" data-i18n="labelConnectionKey">Connection key</label>
+        <input type="password" id="connectionKey" data-i18n-placeholder="placeholderConnectionKey" placeholder="Paste key from Qooti → Settings → Extension Connection" autocomplete="off" />
+        <p class="hint" data-i18n="hintConnectionKey">Required for secure pairing. Clear and re-enter to use a new key after regenerating in Qooti.</p>
+      </div>
+    </section>
+
+    <div class="actions">
+      <button type="button" class="btn-save" id="save" data-i18n="save">Save</button>
+      <span id="status"></span>
+    </div>
+  </main>
+
+  <script src="options.js"></script>
+</body>
+</html>

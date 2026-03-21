@@ -1,0 +1,80 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "qooti",
+  "version": "0.1.0",
+  "identifier": "com.qooti.desktop",
+  "build": {
+    "frontendDist": "../src",
+    "devUrl": "http://127.0.0.1:1421/src/index.html",
+    "beforeDevCommand": "node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js && node scripts/dev-server.js",
+    "beforeBuildCommand": "node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "qooti",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 980,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**", "$HOME/**", "**"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "icon": [
+      "../assets/icon.ico",
+      "../assets/icon.png"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["qooti"],
+        "name": "Qooti Pack",
+        "description": "Qooti encrypted inspiration pack",
+        "role": "Editor",
+        "mimeType": "application/x-qooti-pack"
+      }
+    ],
+    "resources": [
+      "resources/yt-dlp*",
+      "../assets/logo.png",
+      "../assets/qooti-pack-icon.png",
+      "../assets/qooti-pack-icon.ico",
+      "../assets/icons/flaticon/*",
+      "../src/assets/ocr/*",
+      "../src/assets/ocr/models/*"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "10.15",
+      "entitlements": "./entitlements.plist"
+    },
+    "windows": {
+      "nsis": {
+        "sidebarImage": "../assets/installer-sidebar.nsis.bmp",
+        "installerHooks": "./windows-file-assoc-hooks.nsh"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGQjA4OTVCREJBNDE1MzIKUldReUZhVGJXNG13enlna09ueDEvS2JhaFQ5Q0lJRXJzQk5Zeld3Sm5hNHY4K1RtWGtLejMxY3QK",
+      "endpoints": [
+        "https://github.com/blootapp/qooti-releases/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

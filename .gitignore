@@ -1,0 +1,18 @@
+node_modules/
+dist/
+.DS_Store
+Thumbs.db
+*.log
+
+# Local vault data (stored under userData at runtime)
+
+# Bundled yt-dlp (copied at build time)
+src-tauri/resources/
+
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example

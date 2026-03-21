@@ -1,0 +1,50 @@
+[package]
+name = "app"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.10.0", features = ["protocol-asset", "tray-icon", "devtools"] }
+tauri-plugin-log = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+reqwest = { version = "0.12", features = ["blocking", "json", "multipart"] }
+uuid = { version = "1", features = ["v4"] }
+regex = "1"
+url = "2"
+urlencoding = "2"
+image = "0.25"
+palette = { version = "0.7", features = ["std"] }
+color-thief = "0.2"
+zip = "2.2"
+rand = "0.8"
+tiny_http = "0.12"
+aes-gcm = "0.10"
+sha2 = "0.10"
+base64 = "0.22"
+dirs = "5"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"

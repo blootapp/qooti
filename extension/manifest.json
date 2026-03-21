@@ -1,0 +1,67 @@
+{
+  "manifest_version": 3,
+  "name": "Qooti",
+  "version": "0.1.0",
+  "description": "Add images, videos, and links from the web to Qooti — your inspiration vault.",
+  "author": "Qooti",
+  "minimum_chrome_version": "102",
+
+  "icons": {
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
+  },
+
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+
+  "action": {
+    "default_title": "Qooti",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon.png",
+      "48": "icons/icon.png",
+      "128": "icons/icon.png"
+    }
+  },
+
+  "permissions": [
+    "contextMenus",
+    "storage",
+    "activeTab",
+    "notifications"
+  ],
+
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "<all_urls>"
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "icons/remix/*.svg",
+        "icons/icon.png"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Qooti</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --surface: #28282b;
+      --surface-input: #212124;
+      --text: #ffffff;
+      --text-secondary: #b3b3b3;
+      --muted: #71717a;
+      --success: #22c55e;
+      --error: #ef4444;
+      --border: #3a3a3d;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+    * { box-sizing: border-box; }
+    html { background: transparent; }
+    body {
+      width: 340px;
+      min-height: 180px;
+      max-width: 380px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      padding: 20px;
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .popup-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .popup-header img { height: 24px; width: 24px; border-radius: 6px; }
+    .popup-header h1 { font-size: 16px; font-weight: 600; margin: 0; letter-spacing: -0.02em; }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .status-dot.connected { background: var(--success); }
+    .status-dot.disconnected { background: var(--muted); }
+    .status-dot.error { background: var(--error); }
+    .status-label { font-weight: 500; }
+    .status-sublabel { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      margin-bottom: 8px;
+      transition: opacity 0.15s ease;
+    }
+    .btn-primary {
+      background: #ffffff;
+      color: #18181b;
+    }
+    .btn-primary:hover { opacity: 0.92; }
+    .btn-secondary {
+      background: var(--surface-input);
+      color: var(--text);
+      border: 1px solid var(--border);
+      appearance: none;
+      font-family: inherit;
+    }
+    .btn-secondary:hover { border-color: var(--muted); }
+    .btn-secondary:focus { outline: none; border-color: var(--text-secondary); }
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 14px 0 6px;
+    }
+    .section-label:first-of-type { margin-top: 0; }
+    .link-advanced {
+      display: block;
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-secondary);
+      text-decoration: none;
+    }
+    .link-advanced:hover { color: var(--text); }
+    .popup-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+    .popup-footer .link-advanced { margin: 0; }
+    .setup-block {
+      margin-bottom: 12px;
+    }
+    .setup-block input {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--surface-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      font-family: ui-monospace, monospace;
+    }
+    .setup-block input:focus {
+      outline: none;
+      border-color: var(--text-secondary);
+    }
+    .setup-block .hint {
+      font-size: 11px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+    .setup-block .error {
+      font-size: 12px;
+      color: var(--error);
+      margin-top: 6px;
+    }
+    .last-error-block {
+      padding: 10px 14px;
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.25);
+      border-radius: var(--radius-sm);
+      margin-bottom: 12px;
+    }
+    .last-error-block .section-label { color: rgba(239, 68, 68, 0.95); margin-top: 0; }
+    .last-error-block .error { margin: 6px 0 0; font-size: 12px; }
+    .hint { color: var(--text-secondary); }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div class="popup-header">
+    <img src="icons/icon.png" alt="" />
+    <h1 data-i18n="popupTitle">Qooti</h1>
+  </div>
+
+  <!-- First-time or re-entry: no / invalid key -->
+  <div id="setupBlock" class="setup-block hidden">
+    <label class="section-label" data-i18n="popupSetupLabel">Enter your Qooti connection key</label>
+    <input type="text" id="connectionKeyInput" data-i18n-placeholder="placeholderConnectionKey" placeholder="Paste key from Qooti → Settings → Extension Connection" autocomplete="off" spellcheck="false" />
+    <p class="hint" data-i18n="popupSetupHint">Get the key from the desktop app: Settings → Extension Connection</p>
+    <p id="setupError" class="error hidden"></p>
+    <button type="button" id="saveKeyBtn" class="btn btn-primary" style="margin-top: 10px;" data-i18n="popupSaveAndConnect">Save and connect</button>
+  </div>
+
+  <!-- Has key: status + quick actions -->
+  <div id="mainBlock" class="hidden">
+    <div class="section-label" data-i18n="popupConnectionStatus">Connection status</div>
+    <div class="status-row">
+      <span id="statusDot" class="status-dot disconnected"></span>
+      <div>
+        <div id="statusLabel" class="status-label" data-i18n="popupChecking">Checking…</div>
+        <div id="statusSublabel" class="status-sublabel"></div>
+      </div>
+    </div>
+    <div id="lastErrorBlock" class="last-error-block hidden">
+      <span class="section-label" data-i18n="popupLastErrorFromPage">Last error from page</span>
+      <p id="lastErrorText" class="error"></p>
+    </div>
+    <button type="button" id="openQootiBtn" class="btn btn-primary" data-i18n="popupOpenQooti">Open Qooti</button>
+    <div class="section-label" data-i18n="popupDefaultAction">Default action</div>
+    <select id="defaultAction" class="btn btn-secondary" style="cursor: pointer; margin-bottom: 6px;">
+      <option value="add" data-i18n="popupOptAdd">Add to Qooti</option>
+      <option value="download" data-i18n="popupOptDownload">Download and add</option>
+      <option value="link" data-i18n="popupOptLink">Save as link</option>
+    </select>
+    <p class="hint" style="font-size: 11px; color: var(--muted); margin: 8px 0 0;" data-i18n="popupScreenshotHint">Screenshot: keyboard shortcut in Advanced settings</p>
+    <div class="popup-footer">
+      <a id="changeKeyLink" href="#" class="link-advanced" data-i18n="popupChangeKey">Change key</a>
+      <a id="advancedLink" href="#" class="link-advanced" data-i18n="popupAdvancedSettings">Advanced settings</a>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
