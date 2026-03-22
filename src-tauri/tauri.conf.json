@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../src",
     "devUrl": "http://127.0.0.1:1421/src/index.html",
-    "beforeDevCommand": "node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js && node scripts/dev-server.js",
-    "beforeBuildCommand": "node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js"
+    "beforeDevCommand": "node scripts/gen-icons.js && node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js && node scripts/dev-server.js",
+    "beforeBuildCommand": "node scripts/gen-icons.js && node scripts/copy-assets.js && node scripts/prepare-ytdlp.js && node scripts/prepare-ocr-assets.js"
   },
   "app": {
     "withGlobalTauri": true,
