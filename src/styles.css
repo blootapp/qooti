@@ -236,6 +236,16 @@ body {
   flex-shrink: 0;
 }
 
+.title-bar button,
+.title-bar input,
+.title-bar a,
+.title-bar select,
+.title-bar [role="button"],
+.window-control {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
 .title-bar__brand {
   display: flex;
   align-items: center;
@@ -8093,6 +8103,22 @@ select.settings-field__control option {
   pointer-events: auto;
   position: relative;
   z-index: 10;
+}
+
+body.platform-macos .title-bar {
+  justify-content: flex-start;
+}
+
+body.platform-macos .window-controls {
+  margin-right: 10px;
+}
+
+body.platform-macos .title-bar__brand {
+  margin-left: 6px;
+}
+
+body.platform-macos .title-bar__spacer {
+  order: 3;
 }
 
 .window-control {

@@ -254,6 +254,8 @@ pub fn run() {
             commands::open_folder,
             commands::open_external_url,
             commands::window_close,
+            commands::window_hide,
+            commands::window_quit,
             commands::window_minimize,
             commands::window_maximize,
             commands::window_unmaximize,

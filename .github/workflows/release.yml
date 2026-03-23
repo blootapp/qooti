@@ -43,6 +43,19 @@ jobs:
           rustup target add x86_64-apple-darwin
           rustup target add aarch64-apple-darwin
 
+      - name: Download yt-dlp binary
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o src-tauri/resources/yt-dlp
+            chmod +x src-tauri/resources/yt-dlp
+            echo "Downloaded yt-dlp for macOS"
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe" -o src-tauri/resources/yt-dlp.exe
+            echo "Downloaded yt-dlp.exe for Windows"
+          fi
+
       - name: Install dependencies
         env:
           YOUTUBE_DL_SKIP_DOWNLOAD: "true"
@@ -61,3 +74,48 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Remove quarantine attribute
+        if: runner.os == 'macOS'
+        run: |
+          APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -n 1)
+          if [ -n "$APP_PATH" ]; then
+            xattr -cr "$APP_PATH"
+            echo "Quarantine attribute removed from $APP_PATH"
+          fi
+
+      - name: Ad-hoc sign macOS app
+        if: runner.os == 'macOS'
+        run: |
+          if [ -d "src-tauri/target/universal-apple-darwin/release/bundle/macos/qooti.app" ]; then
+            APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/qooti.app"
+          elif [ -d "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/qooti.app" ]; then
+            APP_PATH="src-tauri/target/aarch64-apple-darwin/release/bundle/macos/qooti.app"
+          elif [ -d "src-tauri/target/x86_64-apple-darwin/release/bundle/macos/qooti.app" ]; then
+            APP_PATH="src-tauri/target/x86_64-apple-darwin/release/bundle/macos/qooti.app"
+          else
+            APP_PATH=$(find src-tauri/target -name "*.app" -type d | head -n 1)
+          fi
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: Could not find app bundle"
+            exit 1
+          fi
+
+          echo "Signing: $APP_PATH"
+          codesign --force --deep --sign - "$APP_PATH"
+          codesign --verify --deep --strict "$APP_PATH"
+          echo "Ad-hoc signing complete"
+
+      - name: Ad-hoc sign macOS DMG
+        if: runner.os == 'macOS'
+        run: |
+          DMG_PATH=$(find src-tauri/target -name "*.dmg" | head -n 1)
+          if [ -z "$DMG_PATH" ]; then
+            echo "WARNING: No DMG found, skipping DMG signing"
+            exit 0
+          fi
+
+          echo "Signing DMG: $DMG_PATH"
+          codesign --force --sign - "$DMG_PATH"
+          echo "DMG signing complete"

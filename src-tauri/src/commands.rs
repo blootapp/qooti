@@ -3389,6 +3389,22 @@ pub fn window_close(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn window_hide(app: AppHandle) -> Result<(), String> {
+    cmd_log!("window_hide");
+    app.get_webview_window("main")
+        .ok_or_else(|| "window not found".to_string())?
+        .hide()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn window_quit(app: AppHandle) -> Result<(), String> {
+    cmd_log!("window_quit");
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn window_minimize(app: AppHandle) -> Result<(), String> {
     cmd_log!("window_minimize");
     app.get_webview_window("main")
@@ -5268,29 +5284,39 @@ fn resolve_ytdlp_path(app: Option<&AppHandle>) -> Option<PathBuf> {
     let path_api = app.path();
     for candidate in &["resources/yt-dlp.exe", "yt-dlp.exe", "resources/yt-dlp", "yt-dlp"] {
         if let Ok(p) = path_api.resolve(candidate, BaseDirectory::Resource) {
-            if p.exists() {
+            let exists = p.exists();
+            let size = fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+            info!(
+                "[yt-dlp] candidate={} path={} exists={} size={}",
+                candidate,
+                p.display(),
+                exists,
+                size
+            );
+            if exists && size > 1_000_000 {
                 return Some(p);
             }
         }
     }
     if let Ok(res_dir) = path_api.resource_dir() {
         let p = res_dir.join("resources").join("yt-dlp.exe");
-        if p.exists() {
+        if p.exists() && fs::metadata(&p).map(|m| m.len()).unwrap_or(0) > 1_000_000 {
             return Some(p);
         }
         let p2 = res_dir.join("yt-dlp.exe");
-        if p2.exists() {
+        if p2.exists() && fs::metadata(&p2).map(|m| m.len()).unwrap_or(0) > 1_000_000 {
             return Some(p2);
         }
         let p3 = res_dir.join("resources").join("yt-dlp");
-        if p3.exists() {
+        if p3.exists() && fs::metadata(&p3).map(|m| m.len()).unwrap_or(0) > 1_000_000 {
             return Some(p3);
         }
         let p4 = res_dir.join("yt-dlp");
-        if p4.exists() {
+        if p4.exists() && fs::metadata(&p4).map(|m| m.len()).unwrap_or(0) > 1_000_000 {
             return Some(p4);
         }
     }
+    warn!("[yt-dlp] no valid bundled binary found");
     None
 }
 
@@ -5320,6 +5346,7 @@ pub async fn download_video_from_url(
 ) -> Result<serde_json::Value, String> {
     cmd_log!("download_video_from_url");
     let url = normalize_required_http_url(&url)?;
+    info!("[download] starting url={}", url);
     let id = Uuid::new_v4().to_string();
     let temp_prefix = Uuid::new_v4().to_string();
     let dest = vault.media_dir.join(format!("{}.mp4", temp_prefix));
@@ -5336,6 +5363,7 @@ pub async fn download_video_from_url(
             "yt-dlp"
         })
     });
+    info!("[yt-dlp] selected binary path={}", ytdlp_path.display());
     ensure_executable(&ytdlp_path);
 
     let is_youtube = extract_youtube_video_id(&url).is_some();
@@ -5394,6 +5422,11 @@ pub async fn download_video_from_url(
     let mut cmd = Command::new(&ytdlp_path);
     suppress_console_window(&mut cmd);
     let output = cmd.args(&args).output().map_err(|e| {
+            log::error!(
+                "[yt-dlp] spawn failed path={} err={}",
+                ytdlp_path.display(),
+                e
+            );
             format!(
                 "yt-dlp not found. Run 'npm install' and ensure yt-dlp is in src-tauri/resources/. Error: {}",
                 e
@@ -5402,8 +5435,14 @@ pub async fn download_video_from_url(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!(
+            "[yt-dlp] failed code={:?} stderr={}",
+            output.status.code(),
+            stderr.trim()
+        );
         return Err(format!("yt-dlp failed: {}", stderr.trim()));
     }
+    info!("[yt-dlp] download command completed successfully");
 
     let files: Vec<_> = fs::read_dir(&vault.media_dir)
         .map_err(|e| e.to_string())?
@@ -5912,6 +5951,7 @@ pub async fn add_thumbnail_from_video_url(
             "yt-dlp"
         })
     });
+    info!("[yt-dlp] thumbnail binary path={}", ytdlp_path.display());
     ensure_executable(&ytdlp_path);
 
     let output = {
@@ -5938,7 +5978,14 @@ pub async fn add_thumbnail_from_video_url(
                 &url_clone,
             ])
             .output()
-            .map_err(|e| e.to_string())
+            .map_err(|e| {
+                log::error!(
+                    "[yt-dlp] thumbnail spawn failed path={} err={}",
+                    ytdlp_path.display(),
+                    e
+                );
+                e.to_string()
+            })
         })
         .await
         .map_err(|e| e.to_string())?
@@ -5947,6 +5994,11 @@ pub async fn add_thumbnail_from_video_url(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!(
+            "[yt-dlp] thumbnail failed code={:?} stderr={}",
+            output.status.code(),
+            stderr.trim()
+        );
         return Err(format!("yt-dlp failed: {}", stderr.trim()));
     }
 

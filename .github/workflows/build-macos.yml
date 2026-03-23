@@ -25,6 +25,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Download yt-dlp binary
+        shell: bash
+        run: |
+          mkdir -p src-tauri/resources
+          curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos" -o src-tauri/resources/yt-dlp
+          chmod +x src-tauri/resources/yt-dlp
+          echo "Downloaded yt-dlp for macOS"
+
       - name: Install dependencies
         env:
           YOUTUBE_DL_SKIP_DOWNLOAD: "true"

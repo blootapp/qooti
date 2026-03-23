@@ -907,6 +907,8 @@ export function setupTauriApi() {
     windowClose: () => {
       winApi?.getCurrentWindow?.()?.close?.()?.catch?.((e) => console.error("windowClose", e));
     },
+    windowHide: () => safeInvoke("window_hide", {}),
+    windowQuit: () => safeInvoke("window_quit", {}),
     openDevtools: () => safeInvoke("open_devtools", {}),
 
     /** Check for app updates (used by Settings -> Check for updates button). */

@@ -8989,11 +8989,69 @@ function wireEvents() {
     showNotionMigrationComingSoon();
   });
 
-  // Window controls (stop propagation so drag region doesn't capture). Use __TAURI__ directly if qooti not set (production).
+  // Window controls (stop propagation so drag region doesn't capture).
+  const isMac = /Mac|Darwin|Macintosh/i.test(navigator.userAgent || "");
+  document.body.classList.toggle("platform-macos", isMac);
+
+  const controlsEl = document.querySelector(".window-controls");
+  const titleBarEl = document.querySelector(".title-bar");
+  const titleBrandEl = document.querySelector(".title-bar__brand");
+  const btnMin = $("#btnWindowMinimize");
+  const btnMax = $("#btnWindowMaximize");
+  const btnClose = $("#btnWindowClose");
+  if (isMac && controlsEl && btnMin && btnMax && btnClose) {
+    if (titleBarEl && titleBrandEl) {
+      titleBarEl.insertBefore(controlsEl, titleBrandEl);
+    }
+    // macOS order: close (red), hide (yellow), minimize (green)
+    controlsEl.innerHTML = "";
+    controlsEl.appendChild(btnClose);
+    controlsEl.appendChild(btnMax);
+    controlsEl.appendChild(btnMin);
+    btnClose.title = "Quit";
+    btnClose.setAttribute("aria-label", "Quit");
+    btnMax.title = "Hide";
+    btnMax.setAttribute("aria-label", "Hide");
+    btnMin.title = "Minimize";
+    btnMin.setAttribute("aria-label", "Minimize");
+  }
+
   const getWin = window.__TAURI__?.window?.getCurrentWindow?.();
-  const doMinimize = () => { if (window.qooti?.windowMinimize) { window.qooti.windowMinimize(); return; } getWin?.()?.then((w) => w.minimize()).catch(() => {}); };
-  const doMaximize = () => { if (window.qooti?.windowMaximize) { window.qooti.windowMaximize(); return; } getWin?.()?.then(async (w) => { const m = await w.isMaximized(); m ? w.unmaximize() : w.maximize(); }).catch(() => {}); };
-  const doClose = () => { if (window.qooti?.windowClose) { window.qooti.windowClose(); return; } getWin?.()?.then((w) => w.close()).catch(() => {}); };
+  const doMinimize = () => {
+    if (window.qooti?.windowMinimize) {
+      window.qooti.windowMinimize();
+      return;
+    }
+    getWin?.()?.then((w) => w.minimize()).catch(() => {});
+  };
+  const doHide = () => {
+    if (window.qooti?.windowHide) {
+      window.qooti.windowHide();
+      return;
+    }
+    getWin?.()?.then((w) => w.hide()).catch(() => {});
+  };
+  const doMaximize = () => {
+    if (window.qooti?.windowMaximize) {
+      window.qooti.windowMaximize();
+      return;
+    }
+    getWin?.()?.then(async (w) => {
+      const m = await w.isMaximized();
+      m ? w.unmaximize() : w.maximize();
+    }).catch(() => {});
+  };
+  const doClose = () => {
+    if (isMac && window.qooti?.windowQuit) {
+      window.qooti.windowQuit();
+      return;
+    }
+    if (window.qooti?.windowClose) {
+      window.qooti.windowClose();
+      return;
+    }
+    getWin?.()?.then((w) => w.close()).catch(() => {});
+  };
   $("#btnWindowMinimize")?.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
@@ -9003,6 +9061,10 @@ function wireEvents() {
   $("#btnWindowMaximize")?.addEventListener("click", (e) => {
     e.preventDefault();
     e.stopPropagation();
+    if (isMac) {
+      doHide();
+      return;
+    }
     doMaximize();
   });
 

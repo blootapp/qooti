@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "qooti",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.qooti.desktop",
   "build": {
     "frontendDist": "../src",
@@ -21,7 +21,9 @@
         "minHeight": 640,
         "resizable": true,
         "fullscreen": false,
-        "decorations": false
+        "decorations": false,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true
       }
     ],
     "security": {

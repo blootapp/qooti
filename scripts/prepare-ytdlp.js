@@ -17,15 +17,16 @@ if (!isWin && !isMac) {
   process.exit(0);
 }
 const dest = path.join(destDir, isWin ? "yt-dlp.exe" : "yt-dlp");
+const MIN_VALID_SIZE_BYTES = 1_000_000;
 
 // Skip if already present and reasonably sized
-if (fs.existsSync(dest) && fs.statSync(dest).size > 1_000_000) {
-  console.log("[prepare-ytdlp] yt-dlp.exe already present");
+if (fs.existsSync(dest) && fs.statSync(dest).size > MIN_VALID_SIZE_BYTES) {
+  console.log(`[prepare-ytdlp] ${isWin ? "yt-dlp.exe" : "yt-dlp"} already present`);
   process.exit(0);
 }
 
 const fromNpm = path.join(projectRoot, "node_modules", "youtube-dl-exec", "bin", isWin ? "yt-dlp.exe" : "yt-dlp");
-if (fs.existsSync(fromNpm)) {
+if (fs.existsSync(fromNpm) && fs.statSync(fromNpm).size > MIN_VALID_SIZE_BYTES) {
   fs.mkdirSync(destDir, { recursive: true });
   fs.copyFileSync(fromNpm, dest);
   if (isMac) {
@@ -35,6 +36,9 @@ if (fs.existsSync(fromNpm)) {
   }
   console.log(`[prepare-ytdlp] Copied ${isWin ? "yt-dlp.exe" : "yt-dlp"} from node_modules`);
   process.exit(0);
+}
+if (fs.existsSync(fromNpm)) {
+  console.warn(`[prepare-ytdlp] Ignoring tiny node_modules binary (${fs.statSync(fromNpm).size} bytes), downloading fresh binary`);
 }
 
 // Download from GitHub
