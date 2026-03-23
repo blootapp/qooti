@@ -4357,7 +4357,8 @@ async function downloadVideoFromPreview() {
   } catch (err) {
     console.error("Download video error:", err);
     setPreviewDownloading(false);
-    notifyMediaAdd("Download failed", { variant: "error" });
+    const detail = err?.message || String(err || "");
+    notifyMediaAdd(`Download failed: ${detail || "unknown error"}`, { variant: "error" });
   }
 }
 
@@ -4496,7 +4497,8 @@ async function downloadVideoFromSearchBar() {
     }
   } catch (err) {
     console.error("Download video error:", err);
-    notifyMediaAdd("Download failed", { variant: "error" });
+    const detail = err?.message || String(err || "");
+    notifyMediaAdd(`Download failed: ${detail || "unknown error"}`, { variant: "error" });
   } finally {
     hideDownloadIndicator();
     if (typeof unsubscribe === "function") unsubscribe();

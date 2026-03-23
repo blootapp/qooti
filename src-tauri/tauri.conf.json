@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "qooti",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.qooti.desktop",
   "build": {
     "frontendDist": "../src",
@@ -61,7 +61,9 @@
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",
-      "entitlements": "./entitlements.plist"
+      "entitlements": "./entitlements.plist",
+      "signingIdentity": null,
+      "providerShortName": null
     },
     "windows": {
       "nsis": {

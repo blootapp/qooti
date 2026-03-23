@@ -36,7 +36,7 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 use tauri::{Emitter, Manager};
@@ -2321,7 +2321,10 @@ pub fn list_notifications(
         let client = reqwest::blocking::Client::builder()
             .timeout(std::time::Duration::from_secs(8))
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                log::error!("[HTTP][notifications] client build failed: {}", e);
+                e.to_string()
+            })?;
         let url = if latest_only {
             format!("{}/app/notifications?latest_only=1", api_base)
         } else {
@@ -2329,14 +2332,24 @@ pub fn list_notifications(
         };
         let response = match client.get(url).send() {
             Ok(r) => r,
-            Err(_) => return Ok(None),
+            Err(e) => {
+                log::error!("[HTTP][notifications] request failed: {}", e);
+                return Ok(None);
+            }
         };
         if !response.status().is_success() {
+            log::warn!(
+                "[HTTP][notifications] non-success status: {}",
+                response.status()
+            );
             return Ok(None);
         }
         let payload: serde_json::Value = match response.json() {
             Ok(v) => v,
-            Err(_) => return Ok(None),
+            Err(e) => {
+                log::error!("[HTTP][notifications] response parse failed: {}", e);
+                return Ok(None);
+            }
         };
         let mut rows: Vec<NotificationRow> = payload
             .get("notifications")
@@ -2923,11 +2936,19 @@ fn request_license_server_check(
     device_id: &str,
     activation: bool,
 ) -> Result<LicenseServerCheck, String> {
+    let endpoint = if activation {
+        format!("{}/license/validate", api_base)
+    } else {
+        format!("{}/license/status", api_base)
+    };
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(3))
         .timeout(Duration::from_secs(if activation { 8 } else { 5 }))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            log::error!("[HTTP][license] client build failed endpoint={} err={}", endpoint, e);
+            e.to_string()
+        })?;
     let response = if activation {
         let body = serde_json::json!({
             "license_key": license_key,
@@ -2947,11 +2968,34 @@ fn request_license_server_check(
             ))
             .send()
     }
-    .map_err(|e| format!("Network error: {}", e))?;
+    .map_err(|e| {
+        log::error!(
+            "[HTTP][license] request failed endpoint={} activation={} err={}",
+            endpoint,
+            activation,
+            e
+        );
+        format!("Network error: {}", e)
+    })?;
     let http_status = response.status();
+    if !http_status.is_success() {
+        log::warn!(
+            "[HTTP][license] non-success response endpoint={} status={}",
+            endpoint,
+            http_status
+        );
+    }
     let json = response
         .json::<serde_json::Value>()
-        .map_err(|e| format!("Network error: {}", e))?;
+        .map_err(|e| {
+            log::error!(
+                "[HTTP][license] response parse failed endpoint={} status={} err={}",
+                endpoint,
+                http_status,
+                e
+            );
+            format!("Network error: {}", e)
+        })?;
     Ok(parse_license_server_response(http_status, json))
 }
 
@@ -3312,8 +3356,9 @@ pub fn open_external_url(url: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // Use "start" so the URL opens in the default browser; "explorer" can open file manager
-        Command::new("cmd")
-            .args(["/C", "start", "", &target])
+        let mut cmd = Command::new("cmd");
+        suppress_console_window(&mut cmd);
+        cmd.args(["/C", "start", "", &target])
             .spawn()
             .map_err(|e| e.to_string())?;
     }
@@ -5165,7 +5210,9 @@ fn build_existing_hash_index(
 
 fn fetch_youtube_channel(ytdlp_path: &std::path::Path, url: &str) -> Option<String> {
     ensure_executable(ytdlp_path);
-    let out = Command::new(ytdlp_path)
+    let mut cmd = Command::new(ytdlp_path);
+    suppress_console_window(&mut cmd);
+    let out = cmd
         .args([
             "--skip-download",
             "--no-warnings",
@@ -5186,7 +5233,9 @@ fn fetch_youtube_channel(ytdlp_path: &std::path::Path, url: &str) -> Option<Stri
             }
         })
     } else {
-        Command::new(ytdlp_path)
+        let mut fallback_cmd = Command::new(ytdlp_path);
+        suppress_console_window(&mut fallback_cmd);
+        fallback_cmd
             .args([
                 "--skip-download",
                 "--no-warnings",
@@ -5342,10 +5391,9 @@ pub async fn download_video_from_url(
         "--write-thumbnail".to_string(),
         url.clone(),
     ];
-    let output = Command::new(&ytdlp_path)
-        .args(&args)
-        .output()
-        .map_err(|e| {
+    let mut cmd = Command::new(&ytdlp_path);
+    suppress_console_window(&mut cmd);
+    let output = cmd.args(&args).output().map_err(|e| {
             format!(
                 "yt-dlp not found. Run 'npm install' and ensure yt-dlp is in src-tauri/resources/. Error: {}",
                 e
@@ -5871,25 +5919,26 @@ pub async fn add_thumbnail_from_video_url(
         let url_clone = url.clone();
         let output_str_clone = output_str.clone();
         tauri::async_runtime::spawn_blocking(move || {
-            Command::new(&ytdlp_path)
-                .args([
-                    "-o",
-                    &output_str_clone,
-                    "--no-check-certificates",
-                    "--no-warnings",
-                    "--no-playlist",
-                    "--skip-download",
-                    "--write-thumbnail",
-                    "--socket-timeout",
-                    "8",
-                    "--retries",
-                    "1",
-                    "--extractor-retries",
-                    "1",
-                    &url_clone,
-                ])
-                .output()
-                .map_err(|e| e.to_string())
+            let mut cmd = Command::new(&ytdlp_path);
+            suppress_console_window(&mut cmd);
+            cmd.args([
+                "-o",
+                &output_str_clone,
+                "--no-check-certificates",
+                "--no-warnings",
+                "--no-playlist",
+                "--skip-download",
+                "--write-thumbnail",
+                "--socket-timeout",
+                "8",
+                "--retries",
+                "1",
+                "--extractor-retries",
+                "1",
+                &url_clone,
+            ])
+            .output()
+            .map_err(|e| e.to_string())
         })
         .await
         .map_err(|e| e.to_string())?
@@ -6054,16 +6103,30 @@ pub async fn add_thumbnail_from_url(
             .timeout(std::time::Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                log::error!("[HTTP][thumbnail] client build failed url={} err={}", url, e);
+                e.to_string()
+            })?;
         let mut req = client.get(&url);
         if url.contains("pinimg.com") || url.contains("pinterest.com") {
             req = req.header("Referer", "https://www.pinterest.com/");
         }
-        let resp = req.send().map_err(|e| e.to_string())?;
+        let resp = req.send().map_err(|e| {
+            log::error!("[HTTP][thumbnail] request failed url={} err={}", url, e);
+            e.to_string()
+        })?;
         if !resp.status().is_success() {
+            log::error!(
+                "[HTTP][thumbnail] download failed url={} status={}",
+                url,
+                resp.status()
+            );
             return Err(format!("Download failed: {}", resp.status()));
         }
-        let bytes = resp.bytes().map_err(|e| e.to_string())?;
+        let bytes = resp.bytes().map_err(|e| {
+            log::error!("[HTTP][thumbnail] body read failed url={} err={}", url, e);
+            e.to_string()
+        })?;
         fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
 
         let stored_rel = rel_to_vault(&vault.root, &dest);
@@ -6179,9 +6242,20 @@ pub async fn add_media_from_url(
             .timeout(std::time::Duration::from_secs(20))
             .redirect(reqwest::redirect::Policy::limited(5))
             .build()
-            .map_err(|e| e.to_string())?;
-        let resp = client.get(&url).send().map_err(|e| e.to_string())?;
+            .map_err(|e| {
+                log::error!("[HTTP][media] client build failed url={} err={}", url, e);
+                e.to_string()
+            })?;
+        let resp = client.get(&url).send().map_err(|e| {
+            log::error!("[HTTP][media] request failed url={} err={}", url, e);
+            e.to_string()
+        })?;
         if !resp.status().is_success() {
+            log::error!(
+                "[HTTP][media] download failed url={} status={}",
+                url,
+                resp.status()
+            );
             return Err(format!("Download failed: {}", resp.status()));
         }
         let content_type = resp
@@ -6190,7 +6264,10 @@ pub async fn add_media_from_url(
             .and_then(|v| v.to_str().ok())
             .unwrap_or("")
             .to_lowercase();
-        let bytes = resp.bytes().map_err(|e| e.to_string())?;
+        let bytes = resp.bytes().map_err(|e| {
+            log::error!("[HTTP][media] body read failed url={} err={}", url, e);
+            e.to_string()
+        })?;
 
         let lower_url = url.to_lowercase();
         let media_type = if content_type.starts_with("video/")
@@ -6366,6 +6443,14 @@ pub struct SubmitFeedbackPayload {
 const TELEGRAM_BOT_TOKEN: &str = "8783240003:AAGYfMTDjzo8nJ6xGMqBVWbI557ab3LZxpA";
 const TELEGRAM_CHAT_ID: &str = "911682360";
 const FEEDBACK_LOG_LINES_LIMIT: usize = 300;
+static APP_LOG_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+pub fn configure_app_log_dir(path: PathBuf) {
+    if path.as_os_str().is_empty() {
+        return;
+    }
+    let _ = APP_LOG_DIR_OVERRIDE.set(path);
+}
 
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
@@ -6626,9 +6711,25 @@ fn append_recent_lines(buf: &mut Vec<String>, text: &str, max_lines: usize) {
     }
 }
 
+fn preferred_app_log_dir() -> Option<PathBuf> {
+    if let Some(path) = APP_LOG_DIR_OVERRIDE.get() {
+        return Some(path.clone());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(home) = dirs::home_dir() {
+            return Some(home.join("Library").join("Logs").join("com.qooti.desktop"));
+        }
+    }
+    dirs::data_local_dir().map(|root| root.join("com.qooti.desktop").join("logs"))
+}
+
 fn find_candidate_log_files() -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
+    if let Some(dir) = preferred_app_log_dir() {
+        dirs.push(dir);
+    }
     for env_key in ["APPDATA", "LOCALAPPDATA"] {
         if let Ok(root) = std::env::var(env_key) {
             let root = PathBuf::from(root);
@@ -6638,6 +6739,18 @@ fn find_candidate_log_files() -> Vec<PathBuf> {
             dirs.push(root.join("com.qooti.desktop"));
         }
     }
+    if let Some(local) = dirs::data_local_dir() {
+        dirs.push(local.join("qooti").join("logs"));
+        dirs.push(local.join("com.qooti.desktop").join("logs"));
+        dirs.push(local.join("qooti"));
+        dirs.push(local.join("com.qooti.desktop"));
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(home) = dirs::home_dir() {
+        dirs.push(home.join("Library").join("Logs").join("com.qooti.desktop"));
+    }
+    let mut seen = HashSet::new();
+    dirs.retain(|dir| seen.insert(dir.clone()));
     for dir in dirs {
         if !dir.exists() {
             continue;

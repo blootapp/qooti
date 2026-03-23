@@ -12,6 +12,7 @@ use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
+use tauri_plugin_updater::UpdaterExt;
 
 use crate::commands::{FeedbackQueueState, TagCountBackfillState};
 use crate::db::Db;
@@ -69,6 +70,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
+            match app.path().app_log_dir() {
+                Ok(log_dir) => {
+                    if let Err(err) = std::fs::create_dir_all(&log_dir) {
+                        log::warn!("[logging] failed to create app log dir {:?}: {}", log_dir, err);
+                    } else {
+                        commands::configure_app_log_dir(log_dir.clone());
+                        log::info!("[logging] app log dir ready at {}", log_dir.display());
+                    }
+                }
+                Err(err) => {
+                    log::warn!("[logging] app_log_dir not available from path resolver: {}", err);
+                }
+            }
             let vault_paths = get_vault_paths(app.handle())?;
             ensure_vault(&vault_paths)?;
             let vault = Arc::new(vault_paths);
@@ -158,8 +172,34 @@ pub fn run() {
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
+                    .targets([
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                        tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                            file_name: Some("qooti".to_string()),
+                        }),
+                    ])
                     .build(),
             )?;
+
+            let updater_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                match updater_handle.updater() {
+                    Ok(updater) => match updater.check().await {
+                        Ok(update) => {
+                            log::info!(
+                                "[Updater] startup check ok; update available={}",
+                                update.is_some()
+                            );
+                        }
+                        Err(err) => {
+                            log::error!("[Updater] startup check failed: {}", err);
+                        }
+                    },
+                    Err(err) => {
+                        log::error!("[Updater] startup updater init failed: {}", err);
+                    }
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
