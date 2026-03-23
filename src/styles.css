@@ -81,8 +81,8 @@
   --feedback-error: rgba(200, 105, 105, 0.95);
   --feedback-error-bg: rgba(200, 105, 105, 0.14);
 
-  --radius: 12px;
-  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-sm: 12px;
   --pad: 14px;
 
   /* Animation — iOS-like, minimal, ease-out, no bounce */
@@ -3565,9 +3565,34 @@ html[data-theme="light"] #tagFilterRecent.tag-filter-pill.is-active:hover {
   background: rgba(0, 0, 0, 0.4);
 }
 
+.thumb__duration {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 2;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: rgba(245, 248, 255, 0.95);
+  background: rgba(8, 12, 20, 0.78);
+  border: 1px solid rgba(231, 234, 240, 0.22);
+  opacity: 0;
+  transform: translateY(2px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  pointer-events: none;
+}
+
 .card:hover .thumb__overlay,
 .card.is-selected .thumb__overlay {
   opacity: 1;
+}
+
+.card:hover .thumb__duration,
+.card.is-selected .thumb__duration {
+  opacity: 1;
+  transform: translateY(0);
 }
 
 

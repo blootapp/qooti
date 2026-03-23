@@ -262,6 +262,7 @@ pub fn run() {
             commands::window_is_maximized,
             commands::open_devtools,
             commands::copy_file_to_clipboard,
+            commands::copy_text_to_clipboard,
             commands::fetch_link_preview,
             commands::fetch_notion_gallery,
             commands::add_link_inspiration,

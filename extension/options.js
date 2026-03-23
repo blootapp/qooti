@@ -94,7 +94,7 @@ async function load() {
     STORAGE_KEYS.LANGUAGE,
   ]);
   document.getElementById("displayMode").value = o[STORAGE_KEYS.DISPLAY_MODE] || "both";
-  document.getElementById("popupPosition").value = o[STORAGE_KEYS.POPUP_POSITION] || "top-right";
+  document.getElementById("popupPosition").value = o[STORAGE_KEYS.POPUP_POSITION] || "top-left";
   document.getElementById("desktopUrl").value = o[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL;
   document.getElementById("connectionKey").value = o[STORAGE_KEYS.CONNECTION_KEY] || "";
   document.getElementById("language").value = o[STORAGE_KEYS.LANGUAGE] || "en";

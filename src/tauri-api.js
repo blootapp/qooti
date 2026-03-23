@@ -743,6 +743,7 @@ export function setupTauriApi() {
     findSimilar: (inspirationId, limit) =>
       safeInvoke("find_similar", { inspirationId, limit }),
     copyFileToClipboard: (relPath) => safeInvoke("copy_file_to_clipboard", { relPath }),
+    copyTextToClipboard: (text) => safeInvoke("copy_text_to_clipboard", { text: String(text || "") }),
     async resolveOcrAssets() {
       const pageHref = typeof location !== "undefined" ? location.href : "";
       const webBase = pageHref ? new URL("assets/ocr/", pageHref).toString() : "assets/ocr/";

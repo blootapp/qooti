@@ -262,7 +262,7 @@
     document.head.appendChild(style);
   }
 
-  var cachedPopupPosition = "top-right";
+  var cachedPopupPosition = "top-left";
 
   function applyOverlayPosition(ov, rect, corner, pad, pillW, wrapH) {
     ov.classList.remove("qooti-overlay--top-right", "qooti-overlay--top-left", "qooti-overlay--bottom-right", "qooti-overlay--bottom-left");

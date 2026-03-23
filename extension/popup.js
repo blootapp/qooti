@@ -31,7 +31,6 @@ const translations = {
     popupErrorStatus: "Error",
     popupDesktopNotRunning: "Qooti desktop is not running or not reachable.",
     popupLastErrorFromPage: "Last error from page",
-    popupOpenQooti: "Open Qooti",
     popupDefaultAction: "Default action",
     popupOptAdd: "Add to Qooti",
     popupOptDownload: "Download and add",
@@ -64,7 +63,6 @@ const translations = {
     popupErrorStatus: "Xato",
     popupDesktopNotRunning: "Qooti ish stoli ilovasi ishlamayapti yoki yetib boʻlmayapti.",
     popupLastErrorFromPage: "Sahifadan oxirgi xato",
-    popupOpenQooti: "Qootini ochish",
     popupDefaultAction: "Standart harakat",
     popupOptAdd: "Qootiga qoʻshish",
     popupOptDownload: "Yuklab olish va qoʻshish",
@@ -109,7 +107,6 @@ const statusLabel = document.getElementById("statusLabel");
 const statusSublabel = document.getElementById("statusSublabel");
 const lastErrorBlock = document.getElementById("lastErrorBlock");
 const lastErrorText = document.getElementById("lastErrorText");
-const openQootiBtn = document.getElementById("openQootiBtn");
 const defaultAction = document.getElementById("defaultAction");
 const changeKeyLink = document.getElementById("changeKeyLink");
 const advancedLink = document.getElementById("advancedLink");
@@ -241,22 +238,6 @@ changeKeyLink.addEventListener("click", (e) => {
     showSetup();
     connectionKeyInput.value = "";
     setupError.classList.add("hidden");
-  });
-});
-
-// Open Qooti: use current active tab (no new tab) and let OS handle qooti:// protocol
-openQootiBtn.addEventListener("click", () => {
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const active = tabs && tabs[0];
-    if (active && active.id != null) {
-      chrome.tabs.update(active.id, { url: "qooti://open" }, () => {
-        if (chrome.runtime.lastError) {
-          window.location.href = "qooti://open";
-        }
-      });
-    } else {
-      window.location.href = "qooti://open";
-    }
   });
 });
 

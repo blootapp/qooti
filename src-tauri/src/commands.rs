@@ -887,6 +887,64 @@ pub fn copy_file_to_clipboard(
     }
 }
 
+#[tauri::command]
+pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
+    cmd_log!("copy_text_to_clipboard");
+    let value = text.trim();
+    if value.is_empty() {
+        return Err("Nothing to copy.".to_string());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let mut cmd = Command::new("powershell");
+        suppress_console_window(&mut cmd);
+        let output = cmd
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                "Set-Clipboard -Value $args[0]",
+                "--",
+                value,
+            ])
+            .output()
+            .map_err(|e| format!("Could not access clipboard: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "Could not copy text to clipboard.".to_string()
+            } else {
+                stderr
+            });
+        }
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+        let script = format!(r#"set the clipboard to "{}""#, escaped);
+        let output = Command::new("osascript")
+            .args(["-e", &script])
+            .output()
+            .map_err(|e| format!("Could not access clipboard: {}", e))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "Could not copy text to clipboard.".to_string()
+            } else {
+                stderr
+            });
+        }
+        return Ok(());
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        Err("Copying text to clipboard is currently supported on Windows and macOS only.".to_string())
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn normalize_windows_clipboard_path(path: &Path) -> String {
     let raw = path.to_string_lossy();

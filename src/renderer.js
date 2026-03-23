@@ -695,7 +695,8 @@ async function runOcrForCandidate(candidate) {
       error: err,
       ...summary,
     });
-    toast(`OCR failed for one image, continuing queue: ${errMsg || "recognizer unavailable"}`, { variant: "warning" });
+    const code = summary?.code ? ` (${summary.code})` : "";
+    toast(`OCR failed for one image${code}: ${errMsg || "recognizer unavailable"}`, { variant: "warning" });
   }
 }
 
@@ -2665,13 +2666,15 @@ function wireSettingsControls() {
     extCopyBtn.addEventListener("click", async () => {
       try {
         const key = await window.qooti?.getExtensionKeyForCopy?.();
-        if (key && navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(key);
+        if (key) {
+          await writeTextToClipboard(key);
           const lang = state.settings?.language || "en";
           extCopyBtn.textContent = t("settings.copied", lang);
           setTimeout(() => { extCopyBtn.textContent = t("settings.copyKey", lang); }, 1500);
         }
-      } catch (_) {}
+      } catch (err) {
+        toast(err?.message || "Could not copy connection key.", { variant: "error" });
+      }
     });
   }
   if (extRegenBtn) {
@@ -2690,11 +2693,13 @@ function wireSettingsControls() {
   }
   $("#settingsMobileCopyCode")?.addEventListener("click", async () => {
     const code = ($("#settingsMobileCode")?.textContent || "").trim();
-    if (!code || code === "—" || !navigator.clipboard?.writeText) return;
+    if (!code || code === "—") return;
     try {
-      await navigator.clipboard.writeText(code);
+      await writeTextToClipboard(code);
       toast("Mobile connection code copied.", { variant: "success" });
-    } catch (_) {}
+    } catch (err) {
+      toast(err?.message || "Could not copy mobile connection code.", { variant: "error" });
+    }
   });
 }
 
@@ -2703,6 +2708,27 @@ function isUrl(str) {
   if (!str || typeof str !== "string") return false;
   const trimmed = str.trim();
   return /^https?:\/\//i.test(trimmed) || /^www\./i.test(trimmed);
+}
+
+async function writeTextToClipboard(text) {
+  const value = String(text || "").trim();
+  if (!value) throw new Error("Nothing to copy");
+  const browserWrite = navigator?.clipboard?.writeText?.bind(navigator.clipboard);
+  if (browserWrite) {
+    try {
+      await browserWrite(value);
+      return;
+    } catch (_) {}
+  }
+  if (window.qooti?.copyTextToClipboard) {
+    await window.qooti.copyTextToClipboard(value);
+    return;
+  }
+  throw new Error("Clipboard API is unavailable");
+}
+
+function isSubmitShortcut(e) {
+  return e?.key === "Enter" && (e?.metaKey || e?.ctrlKey);
 }
 
 // Extract domain as fallback title
@@ -2829,7 +2855,7 @@ async function handleCopyMedia(item) {
   } catch (err) {
     dismissNotification(copyingNotif);
     showNotification({
-      message: copyText("copyFailed"),
+      message: `${copyText("copyFailed")}: ${err?.message || "unknown error"}`,
       type: "error",
       duration: 3000,
     });
@@ -2973,10 +2999,10 @@ function showContextMenu(e, item) {
         hideContextMenu();
         if (item.source_url) {
           try {
-            await navigator.clipboard.writeText(item.source_url);
+            await writeTextToClipboard(item.source_url);
             toast(t("ctx.linkCopied", lang), { variant: "success" });
-          } catch {
-            toast(t("ctx.couldNotCopyLink", lang), { variant: "error" });
+          } catch (err) {
+            toast(err?.message || t("ctx.couldNotCopyLink", lang), { variant: "error" });
           }
         }
       }
@@ -3764,10 +3790,10 @@ function showOcrDebugModal(item, forceRefresh = false) {
 
   copyBtn.addEventListener("click", async () => {
     try {
-      await navigator.clipboard.writeText(textEl.textContent || "");
+      await writeTextToClipboard(textEl.textContent || "");
       toast("OCR text copied", { variant: "success" });
-    } catch {
-      toast("Could not copy OCR text", { variant: "error" });
+    } catch (err) {
+      toast(err?.message || "Could not copy OCR text", { variant: "error" });
     }
   });
   refreshBtn.addEventListener("click", async () => {
@@ -5819,10 +5845,12 @@ function buildCard(it) {
           : isYoutubeLink
             ? `<div class="thumb__placeholder" aria-hidden="true">▶</div>`
             : "";
+    const durationBadge = isLocalVideo ? `<span class="thumb__duration hidden"></span>` : "";
     card.innerHTML = `
       <div class="thumb">
         <div class="thumb__overlay"></div>
         <div class="thumb__select" title="Select">${isSelected ? "✓" : ""}</div>
+        ${durationBadge}
         ${thumbContent}
       </div>
       <div class="card-body">
@@ -5835,9 +5863,15 @@ function buildCard(it) {
 
     if (isLocalVideo && mediaUrl) {
       const video = card.querySelector(".thumb__video");
+      const durationEl = card.querySelector(".thumb__duration");
       video.src = loadableUrl(mediaUrl, it.stored_path);
       const posterUrl = thumbUrl ? loadableUrl(thumbUrl, it.thumbnail_path) : "";
       if (posterUrl) video.poster = posterUrl;
+      video.addEventListener("loadedmetadata", () => {
+        if (!durationEl || !isFinite(video.duration) || video.duration <= 0) return;
+        durationEl.textContent = formatDuration(video.duration);
+        durationEl.classList.remove("hidden");
+      }, { once: true });
       card.addEventListener("mouseenter", () => {
         video.play().catch(() => {});
       });
@@ -7995,6 +8029,11 @@ function showFeedbackModal() {
       document.removeEventListener("keydown", handleEscape);
       finish(false);
     });
+    inputEl?.addEventListener("keydown", (e) => {
+      if (!isSubmitShortcut(e)) return;
+      e.preventDefault();
+      submitBtn?.click();
+    });
 
     submitBtn?.addEventListener("click", async () => {
       const message = (inputEl?.value || "").trim();
@@ -8586,11 +8625,14 @@ function wireEvents() {
     }
     function applySearch() {
       const rgb = currentRgb();
-      pushRecentColor(rgbToHex(rgb.r, rgb.g, rgb.b));
+      const hex = rgbToHex(rgb.r, rgb.g, rgb.b);
+      pushRecentColor(hex);
       state.colorFilter = rgb;
       closePopover();
       updateColorFilterUI();
       loadInspirations(false);
+      toast(`Color filter applied: ${hex}`, { variant: "success", durationMs: 1800 });
+      console.info("[color-filter] applied", rgb);
     }
 
     trigger.addEventListener("click", (e) => {
@@ -8609,16 +8651,17 @@ function wireEvents() {
         closePopover();
         updateColorFilterUI();
         loadInspirations(false);
+        toast("Color filter cleared", { variant: "success", durationMs: 1600 });
+        console.info("[color-filter] cleared");
       });
     }
     copyBtn.addEventListener("click", async (e) => {
       e.stopPropagation();
       try {
-        if (navigator.clipboard?.writeText) {
-          await navigator.clipboard.writeText(hexInput.value.trim());
-          toast("Copied to clipboard", { variant: "success" });
-        }
+        await writeTextToClipboard(hexInput.value.trim());
+        toast("Copied to clipboard", { variant: "success" });
       } catch (err) {
+        toast(err?.message || "Could not copy", { variant: "error" });
         console.warn("[qooti] copy color failed:", err?.message || err);
       }
     });
@@ -8773,6 +8816,17 @@ function wireEvents() {
       uilog("addToCollection", "aborted", "no item.id");
       return;
     }
+    if (state.view?.startsWith("collection:") && state.currentCollectionId) {
+      try {
+        await window.qooti.addToCollection(state.currentCollectionId, [item.id]);
+        await refreshData();
+        await loadInspirations(false);
+        toast(`Added to ${state.currentCollectionName || "collection"}`, { durationMs: 2800, variant: "success" });
+      } catch (err) {
+        toast(err?.message || "Could not add to collection", { variant: "error" });
+      }
+      return;
+    }
     uilog("addToCollection", "refreshData start");
     await refreshData();
     uilog("addToCollection", "refreshData done, building modal");
@@ -8852,7 +8906,7 @@ function wireEvents() {
 
   // Add surface input: Enter to submit
   $("#addInput").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") {
+    if (e.key === "Enter" || isSubmitShortcut(e)) {
       e.preventDefault();
       handleAddInputSubmit();
     } else if (e.key === "Escape") {
@@ -8927,10 +8981,10 @@ function wireEvents() {
   $("#previewCopyLink")?.addEventListener("click", async () => {
     if (!pendingLinkPreview?.url) return;
     try {
-      await navigator.clipboard.writeText(pendingLinkPreview.url);
+      await writeTextToClipboard(pendingLinkPreview.url);
       toast("Link copied", { variant: "success" });
-    } catch {
-      toast("Could not copy link", { variant: "error" });
+    } catch (err) {
+      toast(err?.message || "Could not copy link", { variant: "error" });
     }
   });
 
