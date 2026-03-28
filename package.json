@@ -1,6 +1,6 @@
 {
   "name": "qooti",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Local-first inspiration vault (Windows desktop app).",
   "main": "electron/main.js",

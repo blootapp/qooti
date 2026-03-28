@@ -373,8 +373,15 @@ fn verify_signature(manifest: &PackManifest) -> bool {
     sig == hex_sha256(&json)
 }
 
+fn notify_export_progress<F: FnMut(&str, u8)>(cb: &mut Option<F>, message: &str, percent: u8) {
+    if let Some(f) = cb.as_mut() {
+        f(message, percent.min(100));
+    }
+}
+
 /// Export a collection to encrypted .qooti file. Returns (saved_path, items_bundled, items_skipped).
-pub fn export_collection(
+/// `on_progress` receives `(message, percent)` with `percent` in 0..=100.
+pub fn export_collection<F>(
     conn: &Connection,
     vault_root: &Path,
     collection_id: &str,
@@ -382,7 +389,11 @@ pub fn export_collection(
     app_version: Option<&str>,
     pack_name: &str,
     profile_image_data_url: Option<&str>,
-) -> Result<(String, usize, usize), String> {
+    mut on_progress: Option<F>,
+) -> Result<(String, usize, usize), String>
+where
+    F: FnMut(&str, u8),
+{
     let (_, created_at): (String, i64) = conn
         .query_row(
             "SELECT name, created_at FROM collections WHERE id = ?",
@@ -401,11 +412,14 @@ pub fn export_collection(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
+    notify_export_progress(&mut on_progress, "Preparing export…", 0);
+
     let mut pack_items: Vec<(PackItem, Vec<u8>)> = Vec::new();
     let mut bundled = 0usize;
     let mut skipped = 0usize;
 
-    for insp_id in items {
+    let n_total = items.len().max(1);
+    for (idx, insp_id) in items.into_iter().enumerate() {
         let row: Option<(
             String,
             Option<String>,
@@ -444,6 +458,8 @@ pub fn export_collection(
         )) = row
         else {
             skipped += 1;
+            let pct = 4u8.saturating_add(((idx + 1) as u32 * 55 / n_total as u32) as u8);
+            notify_export_progress(&mut on_progress, "Bundling media…", pct.min(58));
             continue;
         };
 
@@ -458,6 +474,8 @@ pub fn export_collection(
             Some(p) if p.exists() => p,
             _ => {
                 skipped += 1;
+                let pct = 4u8.saturating_add(((idx + 1) as u32 * 55 / n_total as u32) as u8);
+                notify_export_progress(&mut on_progress, "Bundling media…", pct.min(58));
                 continue;
             }
         };
@@ -501,7 +519,11 @@ pub fn export_collection(
         };
         pack_items.push((pack_item, bytes));
         bundled += 1;
+        let pct = 4u8.saturating_add(((idx + 1) as u32 * 55 / n_total as u32) as u8);
+        notify_export_progress(&mut on_progress, "Bundling media…", pct.min(58));
     }
+
+    notify_export_progress(&mut on_progress, "Creating profile image…", 60);
 
     let profile_png =
         if let Some(data_url) = profile_image_data_url.filter(|s| !s.trim().is_empty()) {
@@ -538,6 +560,9 @@ pub fn export_collection(
         },
         items: pack_items.iter().map(|(i, _)| i.clone()).collect(),
     };
+
+    notify_export_progress(&mut on_progress, "Writing archive…", 64);
+
     let mut sig_copy = manifest.clone();
     sig_copy.meta.signature.clear();
     manifest.meta.signature =
@@ -557,15 +582,29 @@ pub fn export_collection(
     zip.start_file(PROFILE_IMAGE_PATH, opts)
         .map_err(|e| e.to_string())?;
     zip.write_all(&profile_png).map_err(|e| e.to_string())?;
-    for (item, bytes) in &pack_items {
+
+    notify_export_progress(&mut on_progress, "Compressing media…", 68);
+
+    let n_media = pack_items.len().max(1);
+    for (j, (item, bytes)) in pack_items.iter().enumerate() {
         let media_path = format!("{}{}", MEDIA_PREFIX, item.filename);
         zip.start_file(&media_path, opts)
             .map_err(|e| e.to_string())?;
         zip.write_all(bytes).map_err(|e| e.to_string())?;
+        let pct = 68u8 + ((j + 1) as u32 * 22 / n_media as u32) as u8;
+        notify_export_progress(&mut on_progress, "Compressing media…", pct.min(90));
     }
     let zip_cursor = zip.finish().map_err(|e| e.to_string())?;
+
+    notify_export_progress(&mut on_progress, "Encrypting pack…", 92);
+
     let encrypted = encrypt_blob(&zip_cursor.into_inner())?;
+
+    notify_export_progress(&mut on_progress, "Saving file…", 96);
+
     fs::write(out_path, encrypted).map_err(|e| e.to_string())?;
+
+    notify_export_progress(&mut on_progress, "Finished", 100);
 
     Ok((out_path.to_string_lossy().to_string(), bundled, skipped))
 }

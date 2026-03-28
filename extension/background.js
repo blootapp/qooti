@@ -91,6 +91,40 @@ async function sendToDesktop(payload) {
   }
 }
 
+async function sendToDesktopPath(path, payload, timeoutMs = 8000) {
+  const key = await getConnectionKey();
+  if (!key) {
+    throw new Error("No connection key. Open the extension popup and enter your Qooti key.");
+  }
+  const base = await getDesktopUrl();
+  const url = `${base}${path}`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Qooti-Key": key,
+      },
+      body: JSON.stringify(payload || {}),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (res.status === 401) {
+      await chrome.storage.local.remove(STORAGE_KEYS.CONNECTION_KEY);
+      throw new Error("Invalid connection key. Get a new key from Qooti settings.");
+    }
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `HTTP ${res.status}`);
+    }
+    return await res.json().catch(() => ({}));
+  } catch (e) {
+    if (e.name === "TimeoutError" || e.message?.includes("Failed to fetch")) {
+      throw new Error("Qooti desktop is not running.");
+    }
+    throw e;
+  }
+}
+
 function showDesktopNotRunningNotification() {
   chrome.notifications?.create({
     type: "basic",
@@ -128,6 +162,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "QOOTI_PING") {
     sendResponse({ ok: true });
     return;
+  }
+  if (msg.type === "QOOTI_PICKER_GET_CONFIG") {
+    sendToDesktopPath("/qooti/picker/config", {})
+      .then((data) => sendResponse({ ok: true, data: data || {} }))
+      .catch((e) => sendResponse({ ok: false, error: e?.message || "Failed to load picker config" }));
+    return true;
+  }
+  if (msg.type === "QOOTI_PICKER_GET_COLLECTIONS") {
+    sendToDesktopPath("/qooti/picker/collections", {})
+      .then((data) => sendResponse({ ok: true, data: data || {} }))
+      .catch((e) => sendResponse({ ok: false, error: e?.message || "Failed to load collections" }));
+    return true;
+  }
+  if (msg.type === "QOOTI_PICKER_ASSIGN") {
+    sendToDesktopPath("/qooti/picker/assign", {
+      url: msg.url || "",
+      collectionId: msg.collectionId || null,
+      newCollectionName: msg.newCollectionName || null,
+      pageUrl: msg.pageUrl || "",
+      requestId: msg.requestId || "",
+    }, 10000)
+      .then((data) => sendResponse({ ok: true, data: data || {} }))
+      .catch((e) => sendResponse({ ok: false, error: e?.message || "Failed to assign collection" }));
+    return true;
   }
   if (msg.type !== "QOOTI_ADD_MEDIA") return;
   const payload = {

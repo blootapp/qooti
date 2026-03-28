@@ -698,6 +698,8 @@ export function setupTauriApi() {
       safeInvoke("add_thumbnail_from_video_url", { videoUrl, title }),
     downloadVideoFromUrl: (url, title) =>
       safeInvoke("download_video_from_url", { url, title }),
+    setVideoDownloadPaused: (paused) => safeInvoke("set_video_download_paused", { paused: !!paused }),
+    cancelVideoDownload: () => safeInvoke("cancel_video_download", {}),
     updateInspiration: (id, updates) =>
       safeInvoke("update_inspiration", { payload: { id, updates } }),
     deleteInspiration: (id) => safeInvoke("delete_inspiration", { id }),
@@ -932,7 +934,37 @@ export function setupTauriApi() {
 
     onThumbnailUpdated: () => () => {},
     onVaultReplaced: () => () => {},
-    onDownloadProgress: () => () => {},
+    onDownloadProgress: (handler) => {
+      if (typeof handler !== "function" || !tauriListen) return () => {};
+      const promise = tauriListen("video-download-progress", (ev) => {
+        const payload = ev?.payload;
+        const raw = typeof payload === "number" ? payload : payload?.percent;
+        const pct = Number(raw);
+        if (Number.isFinite(pct)) handler(pct);
+      });
+      return () => {
+        promise
+          .then((unlisten) => {
+            if (typeof unlisten === "function") unlisten();
+          })
+          .catch(() => {});
+      };
+    },
+
+    /** Subscribe to .qooti pack export progress. Handler receives `{ percent, message }`. */
+    onCollectionPackExportProgress: (handler) => {
+      if (typeof handler !== "function" || !tauriListen) return () => {};
+      const promise = tauriListen("collection-pack-export-progress", (ev) => {
+        handler(ev?.payload || {});
+      });
+      return () => {
+        promise
+          .then((unlisten) => {
+            if (typeof unlisten === "function") unlisten();
+          })
+          .catch(() => {});
+      };
+    },
 
     /** Call from console (F12): qooti.debug() to see status and run checks */
     async debug() {

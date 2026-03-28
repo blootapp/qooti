@@ -1,4 +1,3 @@
-use log::info;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
@@ -10,7 +9,7 @@ pub struct Db {
     conn: Mutex<Connection>,
 }
 
-/// Wraps MutexGuard to log when DB lock is released (helps debug stuck commands).
+/// Wraps MutexGuard (no per-acquire logging — avoids log spam).
 pub(crate) struct LoggingDbGuard<'a>(std::sync::MutexGuard<'a, Connection>);
 
 impl Deref for LoggingDbGuard<'_> {
@@ -25,9 +24,7 @@ impl DerefMut for LoggingDbGuard<'_> {
     }
 }
 impl Drop for LoggingDbGuard<'_> {
-    fn drop(&mut self) {
-        info!("[DB] lock released");
-    }
+    fn drop(&mut self) {}
 }
 
 impl Db {
@@ -41,12 +38,10 @@ impl Db {
     }
 
     pub fn conn(&self) -> LoggingDbGuard<'_> {
-        info!("[DB] lock acquire attempt");
         let guard = self
             .conn
             .lock()
             .expect("db lock (if poisoned, a prior command panicked)");
-        info!("[DB] lock acquired");
         LoggingDbGuard(guard)
     }
 }

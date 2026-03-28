@@ -22,12 +22,19 @@ contextBridge.exposeInMainWorld("qooti", {
     invoke("qooti:inspirations:addThumbnailFromUrl", { thumbnailUrl, title }),
   downloadVideoFromUrl: (url, title) =>
     invoke("qooti:inspirations:downloadVideoFromUrl", { url, title }),
+  setVideoDownloadPaused: () => Promise.resolve(),
+  cancelVideoDownload: () => Promise.resolve(),
   updateInspiration: (id, updates) => invoke("qooti:inspirations:update", { id, updates }),
   deleteInspiration: (id) => invoke("qooti:inspirations:delete", { id }),
   copyFileToClipboard: (storedPath) => invoke("qooti:inspirations:copyToClipboard", { storedPath }),
   startDragFile: (storedPath, iconPath) =>
     invoke("qooti:inspirations:startDrag", { storedPath, iconPath: iconPath || null }),
   openFileExternal: (storedPath) => invoke("qooti:inspirations:openExternal", { storedPath }),
+  /** Plain text — use for settings / keys when navigator.clipboard is unreliable (e.g. macOS). */
+  copyTextToClipboard: async (text) => {
+    const res = await invoke("qooti:clipboard:copyText", { text: String(text ?? "") });
+    if (res && res.ok === false) throw new Error(res.error || "Could not copy to clipboard.");
+  },
 
   // Collections
   listCollections: () => invoke("qooti:collections:list"),

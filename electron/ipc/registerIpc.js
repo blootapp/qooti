@@ -135,6 +135,46 @@ function getDomainFromUrl(url) {
   }
 }
 
+const DEFAULT_UNSORTED_COLLECTION_ID = "qooti-unsorted-default";
+const DEFAULT_UNSORTED_COLLECTION_NAME = "Unsorted";
+
+function ensureDefaultUnsortedCollection(db) {
+  const ts = nowMs();
+  db.prepare(
+    `INSERT OR IGNORE INTO collections(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)`
+  ).run(DEFAULT_UNSORTED_COLLECTION_ID, DEFAULT_UNSORTED_COLLECTION_NAME, ts, ts);
+}
+
+function addInspirationToUnsorted(db, inspirationId) {
+  if (!inspirationId) return;
+  const ts = nowMs();
+  ensureDefaultUnsortedCollection(db);
+  const result = db.prepare(
+    `INSERT OR IGNORE INTO collection_items(collection_id, inspiration_id, position, created_at)
+     VALUES (?, ?, NULL, ?)`
+  ).run(DEFAULT_UNSORTED_COLLECTION_ID, inspirationId, ts);
+  if (result.changes > 0) {
+    db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).run(ts, DEFAULT_UNSORTED_COLLECTION_ID);
+  }
+}
+
+function syncUnsortedCollectionMembership(db) {
+  const ts = nowMs();
+  ensureDefaultUnsortedCollection(db);
+  const result = db.prepare(
+    `
+      INSERT OR IGNORE INTO collection_items(collection_id, inspiration_id, position, created_at)
+      SELECT ?, i.id, NULL, ?
+      FROM inspirations i
+      LEFT JOIN collection_items ci ON ci.inspiration_id = i.id
+      WHERE ci.inspiration_id IS NULL
+    `
+  ).run(DEFAULT_UNSORTED_COLLECTION_ID, ts);
+  if (result.changes > 0) {
+    db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).run(ts, DEFAULT_UNSORTED_COLLECTION_ID);
+  }
+}
+
 function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getVault, getBaseUrl }) {
   const baseUrl = typeof getBaseUrl === "function" ? getBaseUrl() : null;
   ipcMain.handle("qooti:getAppInfo", async () => {
@@ -257,6 +297,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       inserts.push({ id, type, storedAbs });
 
@@ -333,6 +374,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       inserts.push({ id, type, storedAbs });
 
@@ -492,6 +534,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       return {
         id,
@@ -549,6 +592,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       // Generate a smaller thumbnail asynchronously
       const thumbAbs = path.join(vault.thumbsDir, `${id}.jpg`);
@@ -627,6 +671,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       const thumbAbs = path.join(vault.thumbsDir, `${id}.jpg`);
       const thumbRel = relToVault(vault.root, thumbAbs);
@@ -706,6 +751,7 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
         created_at: ts,
         updated_at: ts
       });
+      addInspirationToUnsorted(db, id);
 
       // Generate thumbnail asynchronously
       const thumbAbs = path.join(vault.thumbsDir, `${id}.jpg`);
@@ -839,6 +885,22 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
     }
   });
 
+  // Copy plain text to the system clipboard (settings keys, URLs, etc.)
+  ipcMain.handle("qooti:clipboard:copyText", async (_evt, { text } = {}) => {
+    try {
+      const { clipboard } = require("electron");
+      const value = String(text ?? "");
+      if (!value.trim()) {
+        return { ok: false, error: "Nothing to copy" };
+      }
+      clipboard.writeText(value);
+      return { ok: true };
+    } catch (err) {
+      console.error("[qooti:clipboard:copyText]", err);
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
   // Start native file drag (for dragging to external apps, messengers, etc.)
   // Uses a small, framed 64x64 icon for a clean, standard-sized drag preview
   ipcMain.handle("qooti:inspirations:startDrag", async (evt, { storedPath, iconPath }) => {
@@ -898,6 +960,8 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
   // Collections
   ipcMain.handle("qooti:collections:list", async () => {
     const db = getDb();
+    ensureDefaultUnsortedCollection(db);
+    syncUnsortedCollectionMembership(db);
     return db.prepare(`SELECT * FROM collections ORDER BY updated_at DESC`).all();
   });
 
@@ -914,6 +978,9 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
 
   ipcMain.handle("qooti:collections:rename", async (_evt, { id, name }) => {
     const db = getDb();
+    if (id === DEFAULT_UNSORTED_COLLECTION_ID) {
+      return db.prepare(`SELECT * FROM collections WHERE id = ?`).get(id);
+    }
     const finalName = String(name || "").trim() || "Untitled collection";
     db.prepare(`UPDATE collections SET name = ?, updated_at = ? WHERE id = ?`).run(
       finalName,
@@ -925,20 +992,34 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
 
   ipcMain.handle("qooti:collections:delete", async (_evt, { id }) => {
     const db = getDb();
+    if (id === DEFAULT_UNSORTED_COLLECTION_ID) {
+      return { ok: false, error: "Default collection cannot be deleted" };
+    }
     db.prepare(`DELETE FROM collections WHERE id = ?`).run(id);
+    syncUnsortedCollectionMembership(db);
     return { ok: true };
   });
 
   ipcMain.handle("qooti:collections:addItems", async (_evt, { collectionId, inspirationIds }) => {
     const db = getDb();
+    ensureDefaultUnsortedCollection(db);
     const ts = nowMs();
     const ids = Array.isArray(inspirationIds) ? inspirationIds : [];
     const stmt = db.prepare(
       `INSERT OR IGNORE INTO collection_items(collection_id, inspiration_id, position, created_at)
        VALUES (?, ?, NULL, ?)`
     );
+    const removeFromUnsortedStmt = db.prepare(
+      `DELETE FROM collection_items WHERE collection_id = ? AND inspiration_id = ?`
+    );
     const tx = db.transaction(() => {
       for (const inspId of ids) stmt.run(collectionId, inspId, ts);
+      if (collectionId !== DEFAULT_UNSORTED_COLLECTION_ID) {
+        for (const inspId of ids) {
+          removeFromUnsortedStmt.run(DEFAULT_UNSORTED_COLLECTION_ID, inspId);
+        }
+        db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).run(ts, DEFAULT_UNSORTED_COLLECTION_ID);
+      }
       db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).run(ts, collectionId);
     });
     tx();
@@ -949,11 +1030,13 @@ function registerIpc({ ipcMain, dialog, shell, getMainWindow, getDb, setDb, getV
     "qooti:collections:removeItems",
     async (_evt, { collectionId, inspirationIds }) => {
       const db = getDb();
+      ensureDefaultUnsortedCollection(db);
       const ids = Array.isArray(inspirationIds) ? inspirationIds : [];
       const stmt = db.prepare(`DELETE FROM collection_items WHERE collection_id = ? AND inspiration_id = ?`);
       const tx = db.transaction(() => {
         for (const inspId of ids) stmt.run(collectionId, inspId);
         db.prepare(`UPDATE collections SET updated_at = ? WHERE id = ?`).run(nowMs(), collectionId);
+        syncUnsortedCollectionMembership(db);
       });
       tx();
       return { ok: true };

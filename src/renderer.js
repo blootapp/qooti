@@ -1,6 +1,11 @@
 import { notifyNativeWhenHidden } from "./notify.js";
 import { t } from "./i18n.js";
 import html2canvas from "./vendor/html2canvas.esm.js";
+import {
+  recordItemEngagement,
+  applyPersonalizedHomeOrder,
+  shouldPersonalizeHomeGrid,
+} from "./behavior-recommendations.js";
 
 // In production exe, __TAURI__ can be injected after the page loads; wait for it before init so titlebar + license work
 async function waitForTauriContext(timeoutMs = 15000) {
@@ -39,24 +44,41 @@ if (!window.qooti) {
 }
 
 const $ = (sel) => document.querySelector(sel);
+const DEFAULT_UNSORTED_COLLECTION_ID = "qooti-unsorted-default";
 
-/** Log UI action lifecycle for debugging "actions stop after first use" bug.
- *  Frontend: open DevTools (Ctrl+B, then C) -> Console to see [UI] and [UI] invoke_* logs.
- *  Backend: run `cargo tauri dev` from terminal to see [CMD] and [DB] logs. */
-function uilog(action, phase, detail = "") {
-  if (typeof console?.log === "function") {
-    console.log(`[UI] ${action} ${phase}${detail ? " " + detail : ""}`);
+/** Strengthen home-feed recommendations after items are added to a collection (uses tags + type on the item). */
+function recordEngagementAfterCollectionAdd(itemOrIds) {
+  if (Array.isArray(itemOrIds)) {
+    for (const id of itemOrIds) {
+      const item = typeof id === "string" ? state.inspirations.find((i) => i.id === id) : id;
+      if (item?.id) recordItemEngagement(item, "collection");
+    }
+    return;
   }
+  if (itemOrIds?.id) recordItemEngagement(itemOrIds, "collection");
+}
+
+/** Structured UI diagnostics (console.debug — hidden when DevTools default level is Info+). */
+function uilog(action, phase, detail = "") {
+  if (typeof console?.debug !== "function") return;
+  const extra = detail ? ` | ${detail}` : "";
+  console.debug(`[ui] action=${action} | phase=${phase}${extra}`);
 }
 
 function ocrLog(stage, payload = {}) {
-  if (typeof console?.log !== "function") return;
-  console.log("[OCR INDEX]", stage, payload);
+  if (typeof console?.debug !== "function") return;
+  const parts = Object.entries(payload)
+    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
+    .join(" | ");
+  console.debug(`[ocr] ${stage}${parts ? ` | ${parts}` : ""}`);
 }
 
 function ocrWarn(stage, payload = {}) {
   if (typeof console?.warn !== "function") return;
-  console.warn("[OCR INDEX]", stage, payload);
+  const parts = Object.entries(payload)
+    .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
+    .join(" | ");
+  console.warn(`[ocr] ${stage}${parts ? ` | ${parts}` : ""}`);
 }
 
 function summarizeOcrError(stage, err) {
@@ -126,8 +148,8 @@ function summarizeOcrAssetConfig(config) {
     workerCrossOrigin: isCrossOriginWorkerUrl(config.workerUrl),
   };
 }
-if (typeof console?.log === "function") {
-  console.log("[UI] LIFECYCLE_LOGGING enabled — watch for [UI] and invoke_* in Console");
+if (typeof console?.debug === "function") {
+  console.debug("[ui] lifecycle_logging | hint=enable_verbose_in_devtools_for_uilog");
 }
 
 function loadableUrl(absPath, relPath) {
@@ -221,7 +243,7 @@ const state = {
   query: "",
   colorFilter: null, // null | { r, g, b } 0-255
   selectedTagId: "", // "" = All, or tag id for filter bar
-  sortByRecent: false, // when true, show newest first (no shuffle)
+  sortByRecent: false, // UI: "Recent" pill active; same feed order as API (newest first). Shuffle is menu-only.
   inspirations: [],
   collections: [],
   notifications: [],
@@ -234,6 +256,8 @@ const state = {
 
 const GRID_INITIAL_LIMIT = 56;
 const GRID_LOAD_MORE_LIMIT = 56;
+/** Server clamps list_inspirations limit to 500; use max pages for palette backfill. */
+const PALETTE_BACKFILL_PAGE_SIZE = 500;
 let collectionsPageRows = [];
 let notificationsLoading = false;
 let notificationReadIds = new Set();
@@ -266,6 +290,8 @@ let ocrIndexStats = { total: 0, done: 0, no_text: 0, processing: 0, pending: 0 }
 let ocrRunInitialTotal = 0;
 let _ocrAutoIndexTimer = null;
 const OCR_AUTO_INDEX_DELAY_MS = 2500;
+const collectionLabelCache = new Map();
+const collectionLabelPending = new Set();
 let updaterUiState = {
   phase: "idle",
   source: "startup",
@@ -283,6 +309,9 @@ const downloadIndicatorState = {
   active: false,
   label: "Downloading video…",
   percent: 0,
+  /** "video" = yt-dlp download with progress + pause/cancel; "generic" = adding files / thumbnail (no controls). */
+  mode: "generic",
+  paused: false,
 };
 let bottomCenterToastVisible = false;
 
@@ -1173,6 +1202,144 @@ function applyTagFilterVisibility() {
   bar.classList.toggle("hidden", !show);
 }
 
+const TAG_FILTER_BAR_PREFS_KEY = "tagFilterBarPrefs";
+
+function parseTagFilterBarPrefs() {
+  try {
+    const raw = state.settings?.tagFilterBarPrefs || "{}";
+    const o = JSON.parse(raw);
+    let order =
+      o.order === null || o.order === undefined
+        ? null
+        : Array.isArray(o.order)
+          ? o.order.filter((x) => x && String(x).trim())
+          : null;
+    if (Array.isArray(order) && order.length === 0) order = null;
+    return {
+      hidden: Array.isArray(o.hidden) ? o.hidden.filter((x) => x && String(x).trim()) : [],
+      order,
+    };
+  } catch {
+    return { hidden: [], order: null };
+  }
+}
+
+async function saveTagFilterBarPrefs(prefs) {
+  const payload = {
+    hidden: prefs.hidden || [],
+    order: prefs.order === undefined ? null : prefs.order,
+  };
+  const json = JSON.stringify(payload);
+  await saveSetting(TAG_FILTER_BAR_PREFS_KEY, json);
+}
+
+async function getAutoVisibleTagFilterItems() {
+  const prefs = parseTagFilterBarPrefs();
+  const hiddenSet = new Set(prefs.hidden);
+  let topTags = [];
+  try {
+    topTags = (await window.qooti?.getTopTags?.(25)) || [];
+  } catch {
+    topTags = [];
+  }
+  if (!Array.isArray(topTags)) topTags = [];
+  return topTags.filter((t) => t?.id && !hiddenSet.has(t.id));
+}
+
+async function hideTagFilterPillFromBar(tagId) {
+  if (!tagId) return;
+  const prefs = parseTagFilterBarPrefs();
+  if (prefs.order !== null && prefs.order.length > 0) {
+    prefs.order = prefs.order.filter((id) => id !== tagId);
+    if (prefs.order.length === 0) {
+      prefs.order = null;
+      prefs.hidden = [];
+    }
+  } else if (!prefs.hidden.includes(tagId)) {
+    prefs.hidden.push(tagId);
+  }
+  if (state.selectedTagId === tagId) {
+    state.selectedTagId = "";
+    await loadInspirations(false);
+  }
+  await saveTagFilterBarPrefs(prefs);
+  await refreshTagFilterBar();
+  void renderTagFilterBarSettings();
+}
+
+function showTagFilterPillContextMenu(e, tagId) {
+  if (state.settings?.enableContextMenu === "false") return;
+  e.preventDefault();
+  e.stopPropagation();
+  const menu = $("#contextMenu");
+  const content = menu?.querySelector(".context-menu__content");
+  if (!content || !menu) return;
+  content.innerHTML = "";
+  menu.classList.add("context-menu--compact");
+  const lang = state.settings?.language || "en";
+  const row = document.createElement("div");
+  row.className = "context-menu__item context-menu__item--single";
+  row.innerHTML = `<span class="context-menu__icon" aria-hidden="true">${CTX_ICONS.eyeOff}</span><span class="context-menu__label">${escapeHtml(t("tagFilter.hideFromBar", lang))}</span>`;
+  row.addEventListener("click", () => {
+    hideContextMenu();
+    hideTagFilterPillFromBar(tagId);
+  });
+  content.appendChild(row);
+  menu.classList.remove("hidden");
+  const rect = menu.getBoundingClientRect();
+  let x = e.clientX;
+  let y = e.clientY;
+  if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 8;
+  if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 8;
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
+}
+
+async function renderTagFilterBarSettings() {
+  const wrap = $("#settingsTagFilterBarManage");
+  const hiddenList = $("#settingsTagFilterBarHiddenList");
+  const hiddenSection = $("#settingsTagFilterBarHiddenSection");
+  if (!wrap || !hiddenList || !hiddenSection) return;
+  wrap.classList.toggle("hidden", state.settings?.enableTagFilters === "false");
+  if (state.settings?.enableTagFilters === "false") return;
+
+  const lang = state.settings?.language || "en";
+  const prefs = parseTagFilterBarPrefs();
+  let allTags = [];
+  try {
+    allTags = (await window.qooti?.listTags?.()) || [];
+  } catch {
+    allTags = [];
+  }
+  if (!Array.isArray(allTags)) allTags = [];
+  const byId = new Map(allTags.map((t) => [t.id, t]));
+
+  const hidden = prefs.hidden || [];
+  hiddenSection.classList.toggle("hidden", hidden.length === 0);
+  hiddenList.innerHTML = hidden
+    .map((id) => {
+      const tag = byId.get(id);
+      const label = tag ? tag.label || tag.id : id;
+      return `<div class="settings-tag-filter-hidden-row"><span>${escapeHtml(label)}</span><button type="button" class="btn btn--sm btn--secondary settings-tag-filter-unhide" data-tag-id="${escapeHtml(id)}" data-i18n="settings.tagFilterBarUnhide">${escapeHtml(t("settings.tagFilterBarUnhide", lang))}</button></div>`;
+    })
+    .join("");
+
+  applyTranslations();
+}
+
+async function settingsTagFilterBarAfterPrefsChange() {
+  await refreshTagFilterBar();
+  await renderTagFilterBarSettings();
+}
+
+async function settingsTagFilterBarUnhide(tagId) {
+  if (!tagId) return;
+  const prefs = parseTagFilterBarPrefs();
+  prefs.hidden = prefs.hidden.filter((id) => id !== tagId);
+  await saveTagFilterBarPrefs(prefs);
+  await settingsTagFilterBarAfterPrefsChange();
+}
+
 function syncSizeControlModeUi() {
   const useSimple = state.settings?.useSimpleSizeControl !== "false";
   $("#settingsSimpleSizeControls")?.classList.toggle("hidden", !useSimple);
@@ -1255,7 +1422,7 @@ function loadSettingsUI() {
   set("settingGridDensity", s.gridDensity);
   set("settingShowTitlesOnHover", s.showTitlesOnHover ?? "true");
   set("settingShowSourceLabels", s.showSourceLabels);
-  set("settingShowCollectionIndicator", s.showCollectionIndicator);
+  set("settingShowCollectionIndicator", s.showCollectionIndicator ?? "true");
   set("settingEnableTagFilters", s.enableTagFilters ?? "true");
   set("settingUseSimpleSizeControl", s.useSimpleSizeControl ?? "true");
   set("settingUiScalePercent", s.uiScalePercent || "100");
@@ -1271,6 +1438,7 @@ function loadSettingsUI() {
   set("settingRelatedPreferSameMediaType", s.relatedPreferSameMediaType);
   set("settingQuickTagsDefaultEnabled", s.quickTagsDefaultEnabled);
   set("settingLanguage", s.language || "en");
+  set("settingShowExtensionCollectionPicker", s.extensionShowCollectionPicker ?? "true");
   const settingsAccountUsernameInput = $("#settingsAccountUsernameInput");
   if (settingsAccountUsernameInput && document.activeElement !== settingsAccountUsernameInput) {
     settingsAccountUsernameInput.value = getProfileName();
@@ -1387,6 +1555,8 @@ function loadSettingsUI() {
       $("#settingsMobileQr")?.classList.add("hidden");
     }
   })();
+
+  void renderTagFilterBarSettings();
 }
 
 function formatLicenseDate(ts) {
@@ -2033,6 +2203,13 @@ async function ensureProfileSetup() {
 
 // ---------- Onboarding survey ----------
 
+function surveyLibraryPackageHue(name) {
+  let h = 0;
+  const s = String(name || "");
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+
 const SURVEY_QUESTIONS = [
   {
     key: "creative_role",
@@ -2109,6 +2286,15 @@ const ALL_ONBOARDING_COLLECTIONS = Array.from(
   new Set(Object.values(RECOMMENDED_COLLECTIONS_BY_ROLE).flat())
 );
 
+/** Option label → SVG for “How did you discover Qooti?” (single-select only). */
+const SURVEY_DISCOVERY_BRAND_ICONS = {
+  Telegram: "assets/socialmedia/telegram.svg",
+  Instagram: "assets/socialmedia/instagram.svg",
+  YouTube: "assets/socialmedia/youtube.svg",
+  "Friend / colleague": "assets/socialmedia/users-alt.svg",
+  Other: "assets/socialmedia/circle-ellipsis.svg",
+};
+
 function showSurveyView() {
   return new Promise((resolve) => {
     const appEl = document.getElementById("app");
@@ -2117,6 +2303,7 @@ function showSurveyView() {
     const stepEl = view?.querySelector(".survey-view__step");
     const progressEl = $("#surveyProgress");
     const progressFillEl = $("#surveyProgressFill");
+    const progressTrackEl = $("#surveyProgressTrack");
     const questionTitleEl = $("#surveyQuestionTitle");
     const questionHintEl = $("#surveyQuestionHint");
     const optionsEl = $("#surveyOptions");
@@ -2125,6 +2312,7 @@ function showSurveyView() {
     const successScreen = $("#surveySuccessScreen");
     const recommendedList = $("#surveyRecommendedList");
     const continueBtn = $("#surveyContinueBtn");
+    const surveyInner = view.querySelector(".survey-view__inner");
 
     if (
       !appEl ||
@@ -2160,12 +2348,36 @@ function showSurveyView() {
       renderStep();
       if (successScreen && !successScreen.classList.contains("hidden")) {
         const newLang = state.settings?.language || "en";
-        recommendedList.querySelectorAll(".survey-view__recommended-name").forEach((el) => {
-          const name = el.closest("label")?.querySelector("input")?.dataset?.name;
+        successScreen.querySelectorAll("[data-i18n]").forEach((el) => {
+          const k = el.getAttribute("data-i18n");
+          if (k) el.textContent = t(k, newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__title").forEach((el) => {
+          const name = el.dataset.collectionName;
           if (name) el.textContent = t(`survey.collection.${name}`, newLang) || name;
         });
-        recommendedList.querySelectorAll(".survey-view__recommended-badge").forEach((el) => {
+        recommendedList.querySelectorAll(".survey-library-card__rec-chip:not(.hidden)").forEach((el) => {
           el.textContent = t("survey.recommended", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__qty").forEach((el) => {
+          el.textContent = t("survey.packageQty", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__desc").forEach((el) => {
+          el.textContent = t("survey.packageBlurb", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__total-label").forEach((el) => {
+          el.textContent = t("survey.libraryCardTotalLabel", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__price").forEach((el) => {
+          el.textContent = t("survey.packageFree", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__total-value").forEach((el) => {
+          el.textContent = t("survey.packageFree", newLang);
+        });
+        recommendedList.querySelectorAll(".survey-library-card__pill").forEach((el) => {
+          const input = el.closest(".survey-library-card__label")?.querySelector(".survey-library-card__input");
+          if (!input) return;
+          el.textContent = input.checked ? t("survey.packageAddedPill", newLang) : t("survey.packageAddPill", newLang);
         });
       }
     };
@@ -2199,7 +2411,10 @@ function showSurveyView() {
     const updateActionState = () => {
       const question = SURVEY_QUESTIONS[step];
       nextBtn.disabled = !isQuestionValid(question);
-      nextBtn.textContent = step === SURVEY_QUESTIONS.length - 1 ? t("survey.finish", lang) : t("survey.next", lang);
+      const nextLabel = nextBtn.querySelector(".survey-view__next-label");
+      const nextText = step === SURVEY_QUESTIONS.length - 1 ? t("survey.finish", lang) : t("survey.next", lang);
+      if (nextLabel) nextLabel.textContent = nextText;
+      else nextBtn.textContent = nextText;
       backBtn.classList.toggle("hidden", step === 0);
     };
 
@@ -2237,20 +2452,48 @@ function showSurveyView() {
     const renderStep = () => {
       const question = SURVEY_QUESTIONS[step];
       const l = state.settings?.language || "en";
-      progressEl.textContent = `${step + 1} / ${SURVEY_QUESTIONS.length}`;
-      progressFillEl.style.width = `${((step + 1) / SURVEY_QUESTIONS.length) * 100}%`;
+      const total = SURVEY_QUESTIONS.length;
+      const pct = ((step + 1) / total) * 100;
+      progressEl.textContent = `${step + 1} / ${total}`;
+      if (progressFillEl) {
+        progressFillEl.style.width = `${pct}%`;
+        progressFillEl.style.height = "100%";
+      }
+      if (progressTrackEl) {
+        progressTrackEl.setAttribute("aria-valuemax", String(total));
+        progressTrackEl.setAttribute("aria-valuenow", String(step + 1));
+        progressTrackEl.setAttribute("aria-label", `${step + 1} / ${total}`);
+      }
+      const shellEl = stepEl?.querySelector(".survey-view__shell");
+      if (shellEl) {
+        shellEl.classList.toggle("survey-view__shell--single", question.selection === "single");
+        shellEl.classList.toggle("survey-view__shell--multi", question.selection === "multiple");
+      }
       questionTitleEl.textContent = t(`survey.${question.key}.title`, l) || question.title;
       questionHintEl.textContent = t(`survey.${question.key}.hint`, l) || question.hint || "";
       optionsEl.innerHTML = "";
       const isSingle = question.selection === "single";
-      const radioBlank = "assets/icons/remix/radio-button-line.svg";
-      const radioFill = "assets/icons/remix/radio-button-fill.svg";
-      const checkboxBlank = "assets/icons/remix/checkbox-blank-line.svg";
-      const checkboxCheck = "assets/icons/remix/checkbox-circle-line.svg";
-
+      optionsEl.classList.toggle("survey-view__options--stack", isSingle);
+      optionsEl.classList.toggle("survey-view__options--chips", !isSingle);
+      const sectionLabelEl = $("#surveyOptionsSectionLabel");
+      const multiCountEl = $("#surveyMultiCount");
+      if (sectionLabelEl) {
+        sectionLabelEl.classList.toggle("hidden", isSingle);
+        if (!isSingle) sectionLabelEl.textContent = t("survey.choicesSection", l) || "Options";
+      }
+      if (multiCountEl) {
+        if (isSingle) {
+          multiCountEl.classList.add("hidden");
+        } else {
+          multiCountEl.classList.remove("hidden");
+          const n = Array.isArray(answers[question.key]) ? answers[question.key].length : 0;
+          const tmpl = t("survey.selectedCount", l) || "{{n}} / {{total}} selected";
+          multiCountEl.textContent = tmpl.replace(/\{\{n\}\}/g, String(n)).replace(/\{\{total\}\}/g, String(question.options.length));
+        }
+      }
       question.options.forEach((label) => {
         const wrap = document.createElement("div");
-        wrap.className = "survey-view__option-wrap";
+        wrap.className = isSingle ? "survey-view__option-wrap" : "survey-view__option-wrap survey-view__option-wrap--chip";
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "survey-view__option";
@@ -2258,16 +2501,19 @@ function showSurveyView() {
         btn.setAttribute("aria-checked", "false");
         btn.dataset.value = label;
         const icon = document.createElement("span");
-        icon.className = "survey-view__option-icon";
         icon.setAttribute("aria-hidden", "true");
-        if (isSingle) {
-          icon.style.setProperty("--icon-url", `url('${radioBlank}')`);
-          icon.dataset.iconSelected = radioFill;
-          icon.dataset.iconUnselected = radioBlank;
+        const brandSrc = question.key === "discovery_source" && isSingle ? SURVEY_DISCOVERY_BRAND_ICONS[label] : null;
+        if (brandSrc) {
+          icon.className = "survey-view__option-icon survey-view__option-icon--brand";
+          const img = document.createElement("img");
+          img.src = brandSrc;
+          img.alt = "";
+          img.decoding = "async";
+          icon.appendChild(img);
         } else {
-          icon.style.setProperty("--icon-url", `url('${checkboxBlank}')`);
-          icon.dataset.iconSelected = checkboxCheck;
-          icon.dataset.iconUnselected = checkboxBlank;
+          icon.className = isSingle
+            ? "survey-view__option-control survey-view__option-control--radio"
+            : "survey-view__option-control survey-view__option-control--checkbox";
         }
         const labelSpan = document.createElement("span");
         labelSpan.className = "survey-view__option-label";
@@ -2288,7 +2534,6 @@ function showSurveyView() {
             : answers[question.key] === label;
         btn.classList.toggle("is-selected", selected);
         btn.setAttribute("aria-checked", selected ? "true" : "false");
-        icon.style.setProperty("--icon-url", `url('${selected ? icon.dataset.iconSelected : icon.dataset.iconUnselected}')`);
         wrap.appendChild(btn);
         if (selected && question.otherOption === label) {
           renderOtherInput(question, wrap);
@@ -2318,36 +2563,132 @@ function showSurveyView() {
       }
       stepEl.setAttribute("aria-hidden", "true");
       stepsEl.classList.add("hidden");
+      if (surveyInner) surveyInner.classList.add("hidden");
       successScreen.classList.remove("hidden");
       successScreen.setAttribute("aria-hidden", "false");
 
       const role = answers.creative_role || "Other Creative Work";
       const names = RECOMMENDED_COLLECTIONS_BY_ROLE[role] || RECOMMENDED_COLLECTIONS_BY_ROLE["Other Creative Work"];
       const recommended = new Set(names);
+      const langNow = state.settings?.language || "en";
       recommendedList.innerHTML = "";
       ALL_ONBOARDING_COLLECTIONS.forEach((name) => {
-        const label = document.createElement("label");
-        label.className = "survey-view__recommended-item";
+        const article = document.createElement("article");
+        article.className = "survey-library-card";
+        article.setAttribute("role", "listitem");
+
+        const labelEl = document.createElement("label");
+        labelEl.className = "survey-library-card__label";
+
         const input = document.createElement("input");
         input.type = "checkbox";
+        input.className = "survey-library-card__input";
         input.checked = recommended.has(name);
         input.dataset.name = name;
-        label.appendChild(input);
-        const textWrap = document.createElement("span");
-        textWrap.className = "survey-view__recommended-copy";
-        const title = document.createElement("span");
-        title.className = "survey-view__recommended-name";
-        title.textContent = t(`survey.collection.${name}`, lang) || name;
-        textWrap.appendChild(title);
+
+        const top = document.createElement("div");
+        top.className = "survey-library-card__top";
+
+        const thumbWrap = document.createElement("div");
+        thumbWrap.className = "survey-library-card__thumb-wrap";
+        const thumb = document.createElement("div");
+        thumb.className = "survey-library-card__thumb";
+        const hue = surveyLibraryPackageHue(name);
+        const hue2 = (hue + 52) % 360;
+        thumb.style.background = `linear-gradient(135deg, hsl(${hue} 42% 46%) 0%, hsl(${hue2} 48% 32%) 100%)`;
+        const shine = document.createElement("div");
+        shine.className = "survey-library-card__thumb-shine";
+        thumb.appendChild(shine);
+        thumbWrap.appendChild(thumb);
+        top.appendChild(thumbWrap);
+
+        const main = document.createElement("div");
+        main.className = "survey-library-card__main";
+
+        const titleRow = document.createElement("div");
+        titleRow.className = "survey-library-card__title-row";
+
+        const title = document.createElement("h3");
+        title.className = "survey-library-card__title";
+        title.dataset.collectionName = name;
+        title.textContent = t(`survey.collection.${name}`, langNow) || name;
+
+        const recChip = document.createElement("span");
+        recChip.className = "survey-library-card__rec-chip";
         if (recommended.has(name)) {
-          const badge = document.createElement("span");
-          badge.className = "survey-view__recommended-badge";
-          badge.textContent = t("survey.recommended", lang);
-          textWrap.appendChild(badge);
+          recChip.textContent = t("survey.recommended", langNow);
+        } else {
+          recChip.classList.add("hidden");
         }
-        label.appendChild(textWrap);
-        recommendedList.appendChild(label);
+
+        const qty = document.createElement("span");
+        qty.className = "survey-library-card__qty";
+        qty.textContent = t("survey.packageQty", langNow);
+
+        titleRow.appendChild(title);
+        titleRow.appendChild(recChip);
+        titleRow.appendChild(qty);
+
+        const desc = document.createElement("p");
+        desc.className = "survey-library-card__desc";
+        desc.textContent = t("survey.packageBlurb", langNow);
+
+        const price = document.createElement("p");
+        price.className = "survey-library-card__price";
+        price.textContent = t("survey.packageFree", langNow);
+
+        main.appendChild(titleRow);
+        main.appendChild(desc);
+        main.appendChild(price);
+        top.appendChild(main);
+
+        const divider = document.createElement("div");
+        divider.className = "survey-library-card__divider";
+        divider.setAttribute("aria-hidden", "true");
+
+        const bottom = document.createElement("div");
+        bottom.className = "survey-library-card__bottom";
+
+        const totalBlock = document.createElement("div");
+        totalBlock.className = "survey-library-card__total";
+        const totalLabel = document.createElement("span");
+        totalLabel.className = "survey-library-card__total-label";
+        totalLabel.textContent = t("survey.libraryCardTotalLabel", langNow);
+        const totalValue = document.createElement("span");
+        totalValue.className = "survey-library-card__total-value";
+        totalValue.textContent = t("survey.packageFree", langNow);
+        totalBlock.appendChild(totalLabel);
+        totalBlock.appendChild(totalValue);
+
+        const actions = document.createElement("div");
+        actions.className = "survey-library-card__actions";
+        const pill = document.createElement("span");
+        pill.className = "survey-library-card__pill";
+        const round = document.createElement("span");
+        round.className = "survey-library-card__round";
+        round.setAttribute("aria-hidden", "true");
+        actions.appendChild(pill);
+        actions.appendChild(round);
+
+        const syncPackUi = () => {
+          const l = state.settings?.language || "en";
+          pill.textContent = input.checked ? t("survey.packageAddedPill", l) : t("survey.packageAddPill", l);
+        };
+        input.addEventListener("change", syncPackUi);
+        syncPackUi();
+
+        bottom.appendChild(totalBlock);
+        bottom.appendChild(actions);
+
+        labelEl.appendChild(input);
+        labelEl.appendChild(top);
+        labelEl.appendChild(divider);
+        labelEl.appendChild(bottom);
+        article.appendChild(labelEl);
+        recommendedList.appendChild(article);
       });
+
+      applyTranslations();
 
       continueBtn.onclick = async () => {
         continueBtn.disabled = true;
@@ -2355,7 +2696,7 @@ function showSurveyView() {
           const existingNames = new Set(
             (state.collections || []).map((collection) => String(collection?.name || "").trim().toLowerCase())
           );
-          for (const node of recommendedList.querySelectorAll('input[type="checkbox"]:checked')) {
+          for (const node of recommendedList.querySelectorAll(".survey-library-card__input:checked")) {
             const name = node.dataset.name;
             const normalized = String(name || "").trim().toLowerCase();
             if (!name || existingNames.has(normalized) || !window.qooti?.createCollection) continue;
@@ -2368,6 +2709,7 @@ function showSurveyView() {
         }
         successScreen.classList.add("hidden");
         successScreen.setAttribute("aria-hidden", "true");
+        if (surveyInner) surveyInner.classList.remove("hidden");
         stepsEl.classList.remove("hidden");
         cleanup();
       };
@@ -2521,7 +2863,11 @@ function wireSettingsControls() {
       if (btn) btn.disabled = false;
     }
   });
-  bind("settingEnableTagFilters", "enableTagFilters", () => applyTagFilterVisibility());
+  bind("settingEnableTagFilters", "enableTagFilters", () => {
+    applyTagFilterVisibility();
+    void refreshTagFilterBar();
+    void renderTagFilterBarSettings();
+  });
   bind("settingUseSimpleSizeControl", "useSimpleSizeControl", () => {
     syncSizeControlModeUi();
     applyCardSizing();
@@ -2548,6 +2894,7 @@ function wireSettingsControls() {
   bind("settingShowCollectionIndicator", "showCollectionIndicator", () => renderGrid());
   bind("settingShowQuickTagsInToast", "showQuickTagsInToast");
   bind("settingLanguage", "language", () => applyTranslations());
+  bind("settingShowExtensionCollectionPicker", "extensionShowCollectionPicker");
   bind("settingDefaultClickBehavior", "defaultClickBehavior");
   bind("settingEnableContextMenu", "enableContextMenu");
   bind("settingConfirmBeforeDelete", "confirmBeforeDelete");
@@ -2558,6 +2905,12 @@ function wireSettingsControls() {
   bind("settingRelatedPreferSameOrientation", "relatedPreferSameOrientation");
   bind("settingRelatedPreferSameMediaType", "relatedPreferSameMediaType");
   bind("settingQuickTagsDefaultEnabled", "quickTagsDefaultEnabled", () => renderGrid());
+
+  $("#settingsTagFilterBarManage")?.addEventListener("click", (e) => {
+    const unhide = e.target.closest(".settings-tag-filter-unhide");
+    const unhideId = unhide?.dataset?.tagId;
+    if (unhideId) void settingsTagFilterBarUnhide(unhideId);
+  });
 
   const uiScaleMinus = $("#settingUiScaleMinus");
   const uiScalePlus = $("#settingUiScalePlus");
@@ -2633,6 +2986,7 @@ function wireSettingsControls() {
           p.setAttribute("aria-hidden", "true");
         }
       });
+      if (tabId === "tags") void renderTagFilterBarSettings();
     });
   }
   wireSettingsTabs();
@@ -2713,16 +3067,17 @@ function isUrl(str) {
 async function writeTextToClipboard(text) {
   const value = String(text || "").trim();
   if (!value) throw new Error("Nothing to copy");
+  // Desktop bridges use the OS clipboard directly; navigator.clipboard often fails on macOS Electron.
+  if (typeof window.qooti?.copyTextToClipboard === "function") {
+    await window.qooti.copyTextToClipboard(value);
+    return;
+  }
   const browserWrite = navigator?.clipboard?.writeText?.bind(navigator.clipboard);
   if (browserWrite) {
     try {
       await browserWrite(value);
       return;
     } catch (_) {}
-  }
-  if (window.qooti?.copyTextToClipboard) {
-    await window.qooti.copyTextToClipboard(value);
-    return;
   }
   throw new Error("Clipboard API is unavailable");
 }
@@ -2757,6 +3112,50 @@ function youtubeVideoId(url) {
   return null;
 }
 
+/** HTTP(S) URL that may work as HTML video src; excludes YouTube (handled separately). */
+function isHttpVideoSourceCandidate(url) {
+  const u = String(url || "").trim();
+  if (!u) return false;
+  if (youtubeVideoId(u)) return false;
+  try {
+    const normalized = /^www\./i.test(u) ? `https://${u}` : u;
+    const parsed = new URL(normalized);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function inferMimeFromPath(filePath) {
+  const p = String(filePath || "").toLowerCase();
+  if (p.endsWith(".mp4")) return "video/mp4";
+  if (p.endsWith(".webm")) return "video/webm";
+  if (p.endsWith(".mov")) return "video/quicktime";
+  if (p.endsWith(".m4v")) return "video/x-m4v";
+  if (p.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  if (p.endsWith(".png")) return "image/png";
+  if (p.endsWith(".jpg") || p.endsWith(".jpeg")) return "image/jpeg";
+  if (p.endsWith(".gif")) return "image/gif";
+  if (p.endsWith(".webp")) return "image/webp";
+  if (p.endsWith(".bmp")) return "image/bmp";
+  if (p.endsWith(".svg")) return "image/svg+xml";
+  return "application/octet-stream";
+}
+
+function toFileUri(absPath) {
+  const normalized = String(absPath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized) return "";
+  return encodeURI(`file:///${normalized}`);
+}
+
+function dragDownloadUrl(absPath, relPath) {
+  const name = String(relPath || absPath || "").split(/[\\/]/).pop() || "media";
+  const mime = inferMimeFromPath(name);
+  const src = toFileUri(absPath) || loadableUrl(absPath, relPath) || "";
+  if (!src) return "";
+  return `${mime}:${name}:${src}`;
+}
+
 function youtubeEmbedUrl(videoId) {
   const params = new URLSearchParams({
     autoplay: "1",
@@ -2765,6 +3164,45 @@ function youtubeEmbedUrl(videoId) {
     rel: "0"
   });
   return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+}
+
+function youtubeViewerEmbedUrl(videoId) {
+  const params = new URLSearchParams({
+    autoplay: "1",
+    controls: "0",
+    disablekb: "1",
+    modestbranding: "1",
+    rel: "0",
+    showinfo: "0",
+    iv_load_policy: "3",
+    fs: "0",
+    playsinline: "1",
+    enablejsapi: "1",
+    origin: "https://tauri.localhost"
+  });
+  return `https://www.youtube.com/embed/${videoId}?${params.toString()}`;
+}
+
+let _youtubeApiPromise = null;
+function loadYouTubeAPI() {
+  if (window.YT?.Player) return Promise.resolve();
+  if (_youtubeApiPromise) return _youtubeApiPromise;
+  _youtubeApiPromise = new Promise((resolve) => {
+    const existing = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
+    if (!existing) {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+    }
+    const prev = window.onYouTubeIframeAPIReady;
+    window.onYouTubeIframeAPIReady = () => {
+      if (typeof prev === "function") {
+        try { prev(); } catch (_) {}
+      }
+      resolve();
+    };
+  });
+  return _youtubeApiPromise;
 }
 
 // App served over http://localhost in dev → YouTube embed works. Hover-to-play for links.
@@ -2865,7 +3303,7 @@ async function handleCopyMedia(item) {
 
 const SOURCE_LABELS = {
   local: {
-    icon: remixIcon("database-2-line.svg", "ui-icon ui-icon--sm card-label__icon"),
+    icon: remixIcon("box-alt.svg", "ui-icon ui-icon--sm card-label__icon"),
     text: "Local"
   },
   youtube: {
@@ -2887,7 +3325,9 @@ const CTX_ICONS = {
   select: remixIcon("checkbox-circle-line.svg", "ui-icon ui-icon--sm"),
   rename: remixIcon("edit-line.svg", "ui-icon ui-icon--sm"),
   tags: remixIcon("price-tag-3-line.svg", "ui-icon ui-icon--sm"),
-  collection: remixIcon("folder-add-line.svg", "ui-icon ui-icon--sm"),
+  collection: remixIcon("add.svg", "ui-icon ui-icon--sm"),
+  collectionAdded: remixIcon("added.svg", "ui-icon ui-icon--sm"),
+  collectionAdd: remixIcon("add.svg", "ui-icon ui-icon--sm"),
   openSource: remixIcon("external-link-line.svg", "ui-icon ui-icon--sm"),
   copy: remixIcon("file-copy-line.svg", "ui-icon ui-icon--sm"),
   link: remixIcon("link-m.svg", "ui-icon ui-icon--sm"),
@@ -2896,7 +3336,8 @@ const CTX_ICONS = {
   arrow: remixIcon("arrow-right-s-line.svg", "ui-icon ui-icon--sm"),
   exportPack: remixIcon("upload-2-line.svg", "ui-icon ui-icon--sm"),
   profileImage: remixIcon("user-line.svg", "ui-icon ui-icon--sm"),
-  home: remixIcon("layout-4-line.svg", "ui-icon ui-icon--sm")
+  home: remixIcon("layout-4-line.svg", "ui-icon ui-icon--sm"),
+  eyeOff: remixIcon("eye-off-line.svg", "ui-icon ui-icon--sm")
 };
 
 // Context menu state
@@ -2904,7 +3345,11 @@ let contextMenuTarget = null; // The inspiration item being right-clicked
 
 function hideContextMenu() {
   const menu = $("#contextMenu");
-  menu.classList.add("hidden");
+  if (menu) {
+    menu.classList.add("hidden");
+    menu.classList.remove("context-menu--compact");
+  }
+  document.querySelectorAll(".context-menu__submenu--floating").forEach((el) => el.remove());
   contextMenuTarget = null;
 }
 
@@ -2915,6 +3360,7 @@ function showContextMenu(e, item) {
 
   contextMenuTarget = item;
   const menu = $("#contextMenu");
+  menu?.classList.remove("context-menu--compact");
   const content = menu.querySelector(".context-menu__content");
   content.innerHTML = "";
   const lang = state.settings?.language || "en";
@@ -3089,9 +3535,32 @@ function showContextMenu(e, item) {
     
     if (mi.submenu && mi.buildSubmenu) {
       const submenu = document.createElement("div");
-      submenu.className = "context-menu__submenu";
+      submenu.className = "context-menu__submenu context-menu__submenu--floating";
       mi.buildSubmenu(submenu);
-      row.appendChild(submenu);
+      document.body.appendChild(submenu);
+      let hideTimer = null;
+      const showSubmenu = () => {
+        if (!document.body.contains(submenu)) return;
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        const rowRect = row.getBoundingClientRect();
+        submenu.style.left = `${Math.round(rowRect.right - 6)}px`;
+        submenu.style.top = `${Math.round(rowRect.top - 6)}px`;
+        submenu.classList.add("is-open");
+      };
+      const hideSubmenuSoon = () => {
+        if (hideTimer) clearTimeout(hideTimer);
+        hideTimer = setTimeout(() => {
+          submenu.classList.remove("is-open");
+        }, 90);
+      };
+      row.addEventListener("mouseenter", showSubmenu);
+      row.addEventListener("mouseleave", hideSubmenuSoon);
+      submenu.addEventListener("mouseenter", showSubmenu);
+      submenu.addEventListener("mouseleave", hideSubmenuSoon);
+      showSubmenu();
     } else if (mi.action) {
       row.addEventListener("click", mi.action);
     }
@@ -3125,14 +3594,22 @@ function showCollectionContextMenu(e, row) {
   const content = menu.querySelector(".context-menu__content");
   content.innerHTML = "";
   const colLang = state.settings?.language || "en";
+  const isDefaultUnsorted = row?.collection?.id === DEFAULT_UNSORTED_COLLECTION_ID;
+  const collectionDisplayName = getCollectionDisplayName(row.collection);
 
-  const items = [
-    {
+  const items = [];
+
+  if (!isDefaultUnsorted) {
+    items.push({
       icon: CTX_ICONS.rename,
       labelKey: "ctx.rename",
       action: async () => {
         hideContextMenu();
-        const newName = await showPrompt({ message: t("ctx.renameCollection", colLang), defaultValue: row.collection?.name || "", submitLabel: t("ctx.rename", colLang) });
+        const newName = await showPrompt({
+          message: t("ctx.renameCollection", colLang),
+          defaultValue: row.collection?.name || "",
+          submitLabel: t("ctx.rename", colLang)
+        });
         if (newName == null) return;
         await window.qooti.renameCollection(row.collection.id, newName);
         if (state.currentCollectionId === row.collection.id) state.currentCollectionName = newName;
@@ -3140,7 +3617,10 @@ function showCollectionContextMenu(e, row) {
         renderCollectionsPage(collectionsPageRows);
         updateCollectionViewBar();
       }
-    },
+    });
+  }
+
+  items.push(
     {
       icon: CTX_ICONS.exportPack,
       labelKey: "ctx.exportPack",
@@ -3177,20 +3657,39 @@ function showCollectionContextMenu(e, row) {
         };
         input.click();
       }
-    },
-    {
+    }
+  );
+
+  if (!isDefaultUnsorted) {
+    items.push({
       icon: CTX_ICONS.delete,
       label: "Delete",
       danger: true,
       action: async () => {
         hideContextMenu();
-        const ok = await showConfirm({
-          message: `Delete collection "${escapeHtml(truncateForDialog(row.collection?.name || "Collection", 50))}"? This does not delete the media inside.`,
-          confirmLabel: "Delete",
-          danger: true
-        });
-        if (!ok) return;
-        await window.qooti.deleteCollection(row.collection.id);
+        const label = truncateForDialog(collectionDisplayName || "Collection", 50);
+        const choice = await showCollectionDeleteChoice({ collectionName: label });
+        if (choice === "cancel") return;
+        if (choice === "collection_and_media") {
+          const itemsInCollection = (await window.qooti.listInspirations({ collectionId: row.collection.id })) || [];
+          const mediaIds = itemsInCollection.map((it) => it?.id).filter(Boolean);
+          for (const mediaId of mediaIds) {
+            // Sequential deletion avoids overwhelming IPC and keeps file cleanup deterministic.
+            await window.qooti.deleteInspiration(mediaId);
+          }
+          await window.qooti.deleteCollection(row.collection.id);
+          toast(`Deleted collection and ${mediaIds.length} media item${mediaIds.length === 1 ? "" : "s"}`, {
+            durationMs: 3200,
+            variant: "success"
+          });
+        } else {
+          await window.qooti.deleteCollection(row.collection.id);
+          const unsortedLabel = t("collections.unsorted", colLang);
+          toast(`Collection deleted. Media moved to ${unsortedLabel}.`, {
+            durationMs: 3200,
+            variant: "success"
+          });
+        }
         if (state.view === `collection:${row.collection.id}`) {
           state.view = "all";
           state.currentCollectionId = null;
@@ -3201,8 +3700,8 @@ function showCollectionContextMenu(e, row) {
         collectionsPageRows = await loadCollectionsPageRows();
         renderCollectionsPage(collectionsPageRows);
       }
-    }
-  ];
+    });
+  }
 
   const visibleOnHome = row.collection?.visible_on_home !== false;
   items.push({
@@ -3238,60 +3737,84 @@ function showCollectionContextMenu(e, row) {
 
 function buildCollectionSubmenu(item) {
   return (submenu) => {
-    // Existing collections
-    for (const c of state.collections) {
-      const row = document.createElement("div");
-      row.className = "context-menu__submenu-item";
-      row.innerHTML = `
-        <span class="context-menu__submenu-icon">${CTX_ICONS.collection}</span>
-        <span class="context-menu__submenu-label">${c.name}</span>
+    let membershipIds = new Set();
+
+    const renderRows = () => {
+      submenu.innerHTML = "";
+      const truncateSubmenuName = (value) => {
+        const chars = Array.from(String(value || ""));
+        if (chars.length <= 12) return String(value || "");
+        return `${chars.slice(0, 12).join("")}...`;
+      };
+
+      for (const c of state.collections) {
+        const displayName = getCollectionDisplayName(c);
+        const submenuLabel = truncateSubmenuName(displayName);
+        const isMember = membershipIds.has(c.id);
+        const row = document.createElement("div");
+        row.className = "context-menu__submenu-item";
+        row.innerHTML = `
+          <span class="context-menu__submenu-icon">${isMember ? CTX_ICONS.collectionAdded : CTX_ICONS.collectionAdd}</span>
+          <span class="context-menu__submenu-label">${escapeHtml(submenuLabel)}</span>
+        `;
+        row.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          uilog("ctxAddToCollection", "clicked", displayName);
+          hideContextMenu();
+          try {
+            await window.qooti.addToCollection(c.id, [item.id]);
+            recordEngagementAfterCollectionAdd(item);
+            await refreshData();
+            await loadInspirations(false);
+            const subLang = state.settings?.language || "en";
+            toast(t("ctx.addedToCollection", subLang).replace("%s", displayName), { durationMs: 2800, variant: "success" });
+            uilog("ctxAddToCollection", "done", displayName);
+          } catch (err) {
+            uilog("ctxAddToCollection", "error", err?.message || String(err));
+            toast(err?.message || t("ctx.couldNotAddToCollection", subLang), { variant: "error" });
+          }
+        });
+        submenu.appendChild(row);
+      }
+
+      if (state.collections.length > 0) {
+        const div = document.createElement("div");
+        div.className = "context-menu__divider";
+        submenu.appendChild(div);
+      }
+
+      const ctxLang = state.settings?.language || "en";
+      const newRow = document.createElement("div");
+      newRow.className = "context-menu__submenu-item";
+      newRow.innerHTML = `
+        <span class="context-menu__submenu-icon">${CTX_ICONS.newCollection}</span>
+        <span class="context-menu__submenu-label">${escapeHtml(t("ctx.newCollection", ctxLang))}</span>
       `;
-      row.addEventListener("click", async (e) => {
+      newRow.addEventListener("click", async (e) => {
         e.stopPropagation();
-        uilog("ctxAddToCollection", "clicked", c.name);
         hideContextMenu();
-        try {
-          await window.qooti.addToCollection(c.id, [item.id]);
-          await refreshData();
-          await loadInspirations(false);
-          const subLang = state.settings?.language || "en";
-          toast(t("ctx.addedToCollection", subLang).replace("%s", c.name), { durationMs: 2800, variant: "success" });
-          uilog("ctxAddToCollection", "done", c.name);
-        } catch (err) {
-          uilog("ctxAddToCollection", "error", err?.message || String(err));
-          toast(err?.message || t("ctx.couldNotAddToCollection", subLang), { variant: "error" });
-        }
+        const name = await showPrompt({ message: t("ctx.collectionName", ctxLang), defaultValue: t("ctx.newCollection", ctxLang), submitLabel: t("ctx.create", ctxLang) });
+        if (!name) return;
+        const col = await window.qooti.createCollection(name);
+        await window.qooti.addToCollection(col.id, [item.id]);
+        recordEngagementAfterCollectionAdd(item);
+        await refreshData();
+        await loadInspirations(false);
+        toast(t("ctx.addedToCollection", ctxLang).replace("%s", name), { durationMs: 2800, variant: "success" });
       });
-      submenu.appendChild(row);
+      submenu.appendChild(newRow);
+    };
+
+    renderRows();
+    if (item?.id && window.qooti?.getCollectionsForInspiration) {
+      window.qooti
+        .getCollectionsForInspiration(item.id)
+        .then((cols) => {
+          membershipIds = new Set((Array.isArray(cols) ? cols : []).map((c) => c?.id).filter(Boolean));
+          renderRows();
+        })
+        .catch(() => {});
     }
-    
-    // Separator if there are collections
-    if (state.collections.length > 0) {
-      const div = document.createElement("div");
-      div.className = "context-menu__divider";
-      submenu.appendChild(div);
-    }
-    
-    // New collection
-    const ctxLang = state.settings?.language || "en";
-    const newRow = document.createElement("div");
-    newRow.className = "context-menu__submenu-item";
-    newRow.innerHTML = `
-      <span class="context-menu__submenu-icon">${CTX_ICONS.newCollection}</span>
-      <span class="context-menu__submenu-label">${escapeHtml(t("ctx.newCollection", ctxLang))}</span>
-    `;
-    newRow.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      hideContextMenu();
-      const name = await showPrompt({ message: t("ctx.collectionName", ctxLang), defaultValue: t("ctx.newCollection", ctxLang), submitLabel: t("ctx.create", ctxLang) });
-      if (!name) return;
-      const col = await window.qooti.createCollection(name);
-      await window.qooti.addToCollection(col.id, [item.id]);
-      await refreshData();
-      await loadInspirations(false);
-      toast(t("ctx.addedToCollection", ctxLang).replace("%s", name), { durationMs: 2800, variant: "success" });
-    });
-    submenu.appendChild(newRow);
   };
 }
 
@@ -3454,6 +3977,7 @@ async function showEditTagsModal(item, options = {}) {
 }
 
 async function showFindSimilarModal(item) {
+  if (item?.id) recordItemEngagement(item, "similar_source");
   uilog("findRelated", "showFindSimilarModal entered");
   if (!item?.id) return;
   const wrap = document.createElement("div");
@@ -3462,7 +3986,7 @@ async function showFindSimilarModal(item) {
     <div class="app-modal__backdrop"></div>
     <div class="app-modal__dialog app-modal__dialog--wide">
       <div class="app-modal__header">
-        <h3 class="app-modal__title">Find related</h3>
+        <h3 class="app-modal__title"><span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/bard-fill.svg');vertical-align:middle;margin-right:6px" aria-hidden="true"></span>Find related</h3>
         <button type="button" class="app-modal__close" aria-label="Close">&times;</button>
       </div>
       <div class="app-modal__body">
@@ -3638,6 +4162,100 @@ function showConfirm({ message, confirmLabel = "OK", cancelLabel = "Cancel", dan
   });
 }
 
+/**
+ * Collection delete chooser.
+ * Returns:
+ *  - "collection_only": keep media and let backend place unassigned items into Unsorted
+ *  - "collection_and_media": delete collection and all media inside it
+ *  - "cancel"
+ */
+function showCollectionDeleteChoice({ collectionName }) {
+  return new Promise((resolve) => {
+    const wrap = document.createElement("div");
+    wrap.className = "app-modal app-modal--confirm app-modal--collection-delete";
+    wrap.innerHTML = `
+      <div class="app-modal__backdrop"></div>
+      <div class="app-modal__dialog">
+        <div class="app-modal__body"></div>
+        <div class="app-modal__footer">
+          <button type="button" class="btn app-modal__cancel">Cancel</button>
+        </div>
+      </div>
+    `;
+    const bodyEl = wrap.querySelector(".app-modal__body");
+    const titleEl = document.createElement("div");
+    titleEl.className = "app-modal__collection-delete-title";
+    titleEl.textContent = `Delete "${collectionName}"`;
+    bodyEl.appendChild(titleEl);
+    const msgEl = document.createElement("div");
+    msgEl.className = "app-modal__message";
+    msgEl.textContent = "Choose what to do with media in this collection.";
+    bodyEl.appendChild(msgEl);
+    const actionsEl = document.createElement("div");
+    actionsEl.className = "app-modal__collection-delete-actions";
+    actionsEl.innerHTML = `
+      <button type="button" class="btn btn--secondary app-modal__collection-only">
+        <span class="app-modal__collection-delete-btn-title">Delete collection only</span>
+        <span class="app-modal__collection-delete-btn-note">Move media to ${escapeHtml(
+          t("collections.unsorted", state.settings?.language || "en")
+        )}</span>
+      </button>
+      <button type="button" class="btn btn--danger-min app-modal__collection-and-media">
+        <span class="app-modal__collection-delete-btn-title">Delete collection + media</span>
+        <span class="app-modal__collection-delete-btn-note">Remove this collection and its media files</span>
+      </button>
+    `;
+    bodyEl.appendChild(actionsEl);
+
+    const finish = (result) => {
+      const prefersReduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      if (prefersReduced) {
+        wrap.remove();
+        resolve(result);
+        return;
+      }
+      wrap.classList.add("app-modal--closing");
+      const doFinish = () => {
+        wrap.remove();
+        resolve(result);
+      };
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setTimeout(doFinish, MODAL_CLOSE_MS);
+        });
+      });
+    };
+
+    const handleEscape = (e) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        document.removeEventListener("keydown", handleEscape);
+        finish("cancel");
+      }
+    };
+    document.addEventListener("keydown", handleEscape);
+
+    wrap.querySelector(".app-modal__backdrop").addEventListener("click", () => {
+      document.removeEventListener("keydown", handleEscape);
+      finish("cancel");
+    });
+    wrap.querySelector(".app-modal__cancel").addEventListener("click", () => {
+      document.removeEventListener("keydown", handleEscape);
+      finish("cancel");
+    });
+    wrap.querySelector(".app-modal__collection-only").addEventListener("click", () => {
+      document.removeEventListener("keydown", handleEscape);
+      finish("collection_only");
+    });
+    wrap.querySelector(".app-modal__collection-and-media").addEventListener("click", () => {
+      document.removeEventListener("keydown", handleEscape);
+      finish("collection_and_media");
+    });
+
+    document.body.appendChild(wrap);
+  });
+}
+
 /** Custom prompt dialog - returns Promise<string|null> */
 function showPrompt({ message, defaultValue = "", placeholder = "", submitLabel = "OK", cancelLabel = "Cancel" }) {
   return new Promise((resolve) => {
@@ -3718,6 +4336,46 @@ function showPrompt({ message, defaultValue = "", placeholder = "", submitLabel 
   });
 }
 
+function inspirationPaletteIsEmpty(it) {
+  if (!it) return true;
+  const p = it.palette;
+  if (p == null) return true;
+  if (Array.isArray(p)) return p.length === 0;
+  return false;
+}
+
+function mediaItemSupportsPaletteExtract(it) {
+  if (!it?.id) return false;
+  const ty = String(it.type || "").toLowerCase();
+  return ty === "image" || ty === "link";
+}
+
+/** Runs backend palette extraction, refreshes grid + preview, optional callback after success. */
+async function extractPaletteForInspiration(item, onAfter, options = {}) {
+  const { silent = false, skipReload = false } = options || {};
+  const lang = state.settings?.language || "en";
+  if (!item?.id || typeof window.qooti?.extractPalette !== "function") {
+    if (!silent) toast(t("preview.paletteExtractFailed", lang), { variant: "error" });
+    return false;
+  }
+  try {
+    const ok = await window.qooti.extractPalette(item.id);
+    if (ok) {
+      if (!silent) toast(t("preview.paletteExtracted", lang), { variant: "success" });
+      if (!skipReload) await loadInspirations(false);
+      refreshMediaPreviewItemFromState();
+      if (mediaPreviewItem?.id === item.id) syncMediaPreviewActionState(mediaPreviewItem);
+      if (typeof onAfter === "function") await onAfter();
+      return true;
+    }
+    if (!silent) toast(t("preview.paletteExtractFailed", lang), { variant: "warning" });
+    return false;
+  } catch (err) {
+    if (!silent) toast(err?.message || t("preview.paletteExtractFailed", lang), { variant: "error" });
+    return false;
+  }
+}
+
 function showOcrDebugModal(item, forceRefresh = false) {
   if (!item?.id) return;
   const wrap = document.createElement("div");
@@ -3728,6 +4386,14 @@ function showOcrDebugModal(item, forceRefresh = false) {
       <div class="app-modal__body ocr-debug-modal__body">
         <div class="ocr-debug-modal__title">OCR Debug</div>
         <div class="ocr-debug-modal__meta">Loading OCR details for this media item…</div>
+        <div class="ocr-debug-modal__palette hidden">
+          <div class="ocr-debug-modal__palette-head">
+            <div class="ocr-debug-modal__palette-label">Extracted colors</div>
+            <button type="button" class="btn btn--sm btn--secondary ocr-debug-extract-palette hidden" data-i18n="preview.extractColors">Extract colors</button>
+          </div>
+          <p class="ocr-debug-modal__palette-empty-msg hidden" data-i18n="ocrDebug.noPaletteYet">No palette stored yet.</p>
+          <div class="ocr-debug-modal__swatches" role="list"></div>
+        </div>
         <pre class="ocr-debug-modal__text">Loading…</pre>
       </div>
       <div class="app-modal__footer">
@@ -3740,6 +4406,10 @@ function showOcrDebugModal(item, forceRefresh = false) {
 
   const metaEl = wrap.querySelector(".ocr-debug-modal__meta");
   const textEl = wrap.querySelector(".ocr-debug-modal__text");
+  const paletteSectionEl = wrap.querySelector(".ocr-debug-modal__palette");
+  const swatchesEl = wrap.querySelector(".ocr-debug-modal__swatches");
+  const extractPaletteBtn = wrap.querySelector(".ocr-debug-extract-palette");
+  const paletteEmptyMsgEl = wrap.querySelector(".ocr-debug-modal__palette-empty-msg");
   const refreshBtn = wrap.querySelector(".ocr-debug-refresh");
   const copyBtn = wrap.querySelector(".ocr-debug-copy");
 
@@ -3771,9 +4441,56 @@ function showOcrDebugModal(item, forceRefresh = false) {
         `OCR status: ${data?.ocr_status || "null"}`,
         `Can OCR: ${data?.can_attempt_ocr ? "yes" : "no"}`,
         `Token count: ${data?.token_count || 0}`,
+        `Palette swatches: ${Array.isArray(data?.palette) ? data.palette.length : 0}`,
         `Image path: ${data?.analysis_path || "(none)"}`,
       ];
       metaEl.textContent = lines.join(" | ");
+      const swatches = Array.isArray(data?.palette) ? data.palette : [];
+      const canPalettePath = !!data?.can_attempt_ocr;
+      const extractAvailable = typeof window.qooti?.extractPalette === "function";
+      if (paletteSectionEl && swatchesEl) {
+        if (swatches.length > 0) {
+          paletteSectionEl.classList.remove("hidden");
+          paletteEmptyMsgEl?.classList.add("hidden");
+          extractPaletteBtn?.classList.add("hidden");
+          swatchesEl.replaceChildren();
+          swatches.forEach((s) => {
+            const hex = String(s?.hex || "").trim() || "#000000";
+            const row = document.createElement("div");
+            row.className = "ocr-debug-modal__swatch-row";
+            row.setAttribute("role", "listitem");
+            const chip = document.createElement("div");
+            chip.className = "ocr-debug-modal__swatch";
+            chip.style.background = hex;
+            chip.title = hex;
+            const cap = document.createElement("div");
+            cap.className = "ocr-debug-modal__swatch-cap";
+            const l = Number(s?.lab_l);
+            const a = Number(s?.lab_a);
+            const b = Number(s?.lab_b);
+            const labTxt = [l, a, b].every((n) => Number.isFinite(n))
+              ? `L* ${l.toFixed(1)} · a* ${a.toFixed(1)} · b* ${b.toFixed(1)}`
+              : "";
+            cap.innerHTML = `<span class="ocr-debug-modal__swatch-hex">${escapeHtml(hex)}</span>${
+              labTxt ? `<span class="ocr-debug-modal__swatch-lab">${escapeHtml(labTxt)}</span>` : ""
+            }`;
+            chip.title = labTxt ? `${hex} — ${labTxt}` : hex;
+            row.appendChild(chip);
+            row.appendChild(cap);
+            swatchesEl.appendChild(row);
+          });
+        } else if (canPalettePath && extractAvailable) {
+          paletteSectionEl.classList.remove("hidden");
+          paletteEmptyMsgEl?.classList.remove("hidden");
+          extractPaletteBtn?.classList.remove("hidden");
+          swatchesEl.replaceChildren();
+        } else {
+          paletteSectionEl.classList.add("hidden");
+          paletteEmptyMsgEl?.classList.add("hidden");
+          extractPaletteBtn?.classList.add("hidden");
+          swatchesEl.replaceChildren();
+        }
+      }
       const text = String(data?.ocr_text || "").trim();
       textEl.textContent = text || "(No OCR text saved for this image yet)";
       copyBtn.disabled = !text;
@@ -3803,7 +4520,19 @@ function showOcrDebugModal(item, forceRefresh = false) {
     setTimeout(() => load(false), 2500);
   });
 
+  extractPaletteBtn?.addEventListener("click", async () => {
+    extractPaletteBtn.disabled = true;
+    try {
+      await extractPaletteForInspiration(item, async () => {
+        await load(false);
+      });
+    } finally {
+      extractPaletteBtn.disabled = false;
+    }
+  });
+
   document.body.appendChild(wrap);
+  applyTranslations();
   load(forceRefresh);
 }
 
@@ -4065,7 +4794,7 @@ async function addFromPaths(paths) {
 
   // Normal media files
   if (mediaPaths.length > 0) {
-    showDownloadIndicator("Adding…");
+    showDownloadIndicator("Adding…", { mode: "generic" });
     try {
       const res = await importMediaPaths(mediaPaths);
       hadAnySuccess = hadAnySuccess || res.addedCount > 0;
@@ -4145,7 +4874,7 @@ async function addThumbnailFromPreview() {
   const videoUrl = pendingLinkPreview.url;
 
   hideAddSurface();
-  showDownloadIndicator("Downloading thumbnail…");
+  showDownloadIndicator("Downloading thumbnail…", { mode: "generic" });
   try {
     const result = await window.qooti.addThumbnailFromVideoUrl(videoUrl, title);
     if (result) {
@@ -4168,23 +4897,52 @@ async function addThumbnailFromPreview() {
   }
 }
 
-function showDownloadIndicator(label = "Downloading video…") {
+function showDownloadIndicator(label, options = {}) {
+  const lang = state.settings?.language || "en";
   downloadIndicatorState.active = true;
-  downloadIndicatorState.label = label;
+  downloadIndicatorState.label =
+    label != null && String(label).trim() !== "" ? String(label) : t("download.downloadingVideo", lang);
   downloadIndicatorState.percent = 0;
+  downloadIndicatorState.mode = options.mode === "video" ? "video" : "generic";
+  downloadIndicatorState.paused = false;
   syncBottomCenterIndicators();
 }
 
 function renderDownloadIndicator() {
   const el = $("#downloadIndicator");
   const labelEl = $("#downloadIndicatorLabel");
+  const actions = $("#downloadIndicatorActions");
+  const pauseBtn = $("#downloadIndicatorPauseBtn");
+  const pauseImg = $("#downloadIndicatorPauseImg");
+  const playImg = $("#downloadIndicatorPlayImg");
   if (!el) return;
   if (!downloadIndicatorState.active || !shouldRenderBottomCenterIndicator("download")) {
     el.classList.add("hidden");
     el.setAttribute("aria-hidden", "true");
     return;
   }
-  if (labelEl) labelEl.textContent = downloadIndicatorState.label;
+  const lang = state.settings?.language || "en";
+  const isVideo = downloadIndicatorState.mode === "video";
+  const baseLabel = downloadIndicatorState.label;
+  if (labelEl) {
+    labelEl.textContent =
+      isVideo && downloadIndicatorState.paused ? t("download.paused", lang) : baseLabel;
+  }
+  if (pauseBtn) {
+    pauseBtn.setAttribute(
+      "aria-label",
+      downloadIndicatorState.paused ? t("download.resume", lang) : t("download.pause", lang)
+    );
+  }
+  if (pauseImg && playImg) {
+    pauseImg.classList.toggle("hidden", !!downloadIndicatorState.paused);
+    playImg.classList.toggle("hidden", !downloadIndicatorState.paused);
+  }
+  if (actions) {
+    actions.classList.toggle("hidden", !isVideo);
+    actions.setAttribute("aria-hidden", isVideo ? "false" : "true");
+  }
+  $("#downloadIndicatorCancelBtn")?.setAttribute("aria-label", t("download.cancel", lang));
   el.classList.remove("hidden");
   el.setAttribute("aria-hidden", "false");
   const ringFill = el.querySelector(".download-indicator__ring-fill");
@@ -4208,12 +4966,52 @@ function renderDownloadIndicator() {
 
 function hideDownloadIndicator() {
   downloadIndicatorState.active = false;
+  downloadIndicatorState.paused = false;
+  downloadIndicatorState.mode = "generic";
   syncBottomCenterIndicators();
 }
 
 function updateDownloadIndicator(percent) {
   downloadIndicatorState.percent = percent;
   renderDownloadIndicator();
+}
+
+/** Wraps `downloadVideoFromUrl` with bottom progress UI and event unlisten. */
+async function downloadVideoWithProgressUI(url, title) {
+  showDownloadIndicator(null, { mode: "video" });
+  const unsub = window.qooti.onDownloadProgress?.((pct) => updateDownloadIndicator(pct));
+  try {
+    return await window.qooti.downloadVideoFromUrl(url, title ?? null);
+  } finally {
+    if (typeof unsub === "function") unsub();
+    hideDownloadIndicator();
+  }
+}
+
+function wireVideoDownloadIndicator() {
+  $("#downloadIndicatorPauseBtn")?.addEventListener("click", async () => {
+    if (downloadIndicatorState.mode !== "video" || !downloadIndicatorState.active) return;
+    const next = !downloadIndicatorState.paused;
+    downloadIndicatorState.paused = next;
+    try {
+      await window.qooti.setVideoDownloadPaused?.(next);
+    } catch (_) {}
+    renderDownloadIndicator();
+  });
+  $("#downloadIndicatorCancelBtn")?.addEventListener("click", async () => {
+    if (downloadIndicatorState.mode !== "video" || !downloadIndicatorState.active) return;
+    const lang = state.settings?.language || "en";
+    const ok = await showConfirm({
+      message: t("download.cancelConfirm", lang),
+      confirmLabel: t("download.cancelConfirmYes", lang),
+      cancelLabel: t("download.cancelConfirmNo", lang),
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await window.qooti.cancelVideoDownload?.();
+    } catch (_) {}
+  });
 }
 
 function hideUpdateIndicator() {
@@ -4365,7 +5163,12 @@ async function downloadVideoFromPreview() {
   setPreviewDownloading(true);
 
   try {
-    const result = await window.qooti.downloadVideoFromUrl(url, title);
+    const result = await downloadVideoWithProgressUI(url, title);
+
+    if (result?.cancelled) {
+      setPreviewDownloading(false);
+      return;
+    }
 
     if (result?.ok) {
       const insp = result?.inspiration;
@@ -4410,6 +5213,99 @@ async function addFromClipboardImage(blob) {
 // Search bar paste: show download button for video links
 let searchPastedVideoUrl = null;
 let delAllInProgress = false;
+let deleteSurveyCmdInProgress = false;
+let bltRangPaletteInProgress = false;
+
+/** Search-bar command: list all image/link rows with no palette, then extract sequentially. */
+async function handleBltRangPaletteBackfillCommand() {
+  const lang = state.settings?.language || "en";
+  if (bltRangPaletteInProgress) return;
+  if (typeof window.qooti?.extractPalette !== "function" || typeof window.qooti?.listInspirations !== "function") {
+    toast(t("preview.paletteExtractFailed", lang), { variant: "error" });
+    return;
+  }
+  bltRangPaletteInProgress = true;
+  try {
+    const collected = [];
+    let offset = 0;
+    for (;;) {
+      const params = {
+        query: "",
+        limit: PALETTE_BACKFILL_PAGE_SIZE,
+        offset,
+        missingPaletteOnly: true,
+      };
+      if (state.view.startsWith("collection:")) {
+        params.collectionId = state.view.split(":")[1];
+      }
+      if (state.selectedTagId) {
+        params.tagId = state.selectedTagId;
+      }
+      const batch = (await window.qooti.listInspirations(params)) || [];
+      collected.push(...batch);
+      if (batch.length < PALETTE_BACKFILL_PAGE_SIZE) break;
+      offset += PALETTE_BACKFILL_PAGE_SIZE;
+    }
+    const items = collected.filter((it) => mediaItemSupportsPaletteExtract(it) && inspirationPaletteIsEmpty(it));
+    if (items.length === 0) {
+      toast(t("preview.bltRangNoItems", lang), { variant: "info" });
+      await loadInspirations(false);
+      return;
+    }
+    toast(t("preview.bltRangQueued", lang).replace("{n}", String(items.length)), {
+      variant: "info",
+      durationMs: 5000,
+    });
+    let ok = 0;
+    let fail = 0;
+    for (const item of items) {
+      const success = await extractPaletteForInspiration(item, null, { silent: true, skipReload: true });
+      if (success) ok += 1;
+      else fail += 1;
+    }
+    await loadInspirations(false);
+    refreshMediaPreviewItemFromState();
+    if (mediaPreviewItem) syncMediaPreviewActionState(mediaPreviewItem);
+    toast(
+      t("preview.bltRangDone", lang).replace("{ok}", String(ok)).replace("{fail}", String(fail)),
+      {
+        variant: fail > 0 ? "warning" : "success",
+        durationMs: 8000,
+      }
+    );
+  } catch (err) {
+    console.error("[blt_rang] failed:", err);
+    toast(err?.message || t("preview.paletteExtractFailed", lang), { variant: "error" });
+  } finally {
+    bltRangPaletteInProgress = false;
+  }
+}
+
+async function handleDeleteSurveySearchCommand() {
+  if (deleteSurveyCmdInProgress) return;
+  if (typeof window.qooti?.clearSurveyData !== "function") {
+    notifyMediaAdd("Survey reset is not available in this build.", { variant: "error" });
+    return;
+  }
+  deleteSurveyCmdInProgress = true;
+  try {
+    const ok = await showConfirm({
+      message:
+        "Delete saved onboarding survey data from this device? The survey may appear again after you restart the app.",
+      confirmLabel: "Delete",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    await window.qooti.clearSurveyData();
+    notifyMediaAdd("Survey data removed.", { variant: "success" });
+  } catch (err) {
+    console.error("clearSurveyData error:", err);
+    notifyMediaAdd(err?.message || "Could not remove survey data.", { variant: "error" });
+  } finally {
+    deleteSurveyCmdInProgress = false;
+  }
+}
 
 async function handleDelAllSearchCommand() {
   if (delAllInProgress) return;
@@ -4504,14 +5400,12 @@ async function downloadVideoFromSearchBar() {
   state.query = "";
   hideSearchDownloadBar();
 
-  showDownloadIndicator();
-  const unsubscribe = window.qooti.onDownloadProgress?.(updateDownloadIndicator);
-
   try {
-    const result = await window.qooti.downloadVideoFromUrl(url, title || null);
+    const result = await downloadVideoWithProgressUI(url, title || null);
+
+    if (result?.cancelled) return;
 
     if (result?.ok) {
-      updateDownloadIndicator(100);
       const insp = result?.inspiration;
       const item = insp ? { id: insp.id, type: insp.type || "video", title: insp.title, tags: insp.tags || [] } : null;
       notifyMediaAdd("Added", { durationMs: 3200, item, variant: "success" });
@@ -4525,9 +5419,6 @@ async function downloadVideoFromSearchBar() {
     console.error("Download video error:", err);
     const detail = err?.message || String(err || "");
     notifyMediaAdd(`Download failed: ${detail || "unknown error"}`, { variant: "error" });
-  } finally {
-    hideDownloadIndicator();
-    if (typeof unsubscribe === "function") unsubscribe();
   }
 }
 
@@ -4789,6 +5680,8 @@ function toggleDropdown(id, position) {
 async function refreshData() {
   try {
     state.collections = await window.qooti.listCollections();
+    collectionLabelCache.clear();
+    collectionLabelPending.clear();
   } catch (e) {
     console.error("[qooti] refreshData failed:", e?.message || e);
     if (window.qooti?.debug) window.qooti.debug();
@@ -4890,17 +5783,14 @@ function normalizePackName(name) {
 function validatePackName(name) {
   const normalized = normalizePackName(name);
   if (!normalized) return "Pack name is required.";
-  if (normalized.length > 50) return "Pack name must be 50 characters or fewer.";
-  if (!/^[A-Za-z0-9]+(?:[ -][A-Za-z0-9]+)*$/.test(normalized)) {
-    return "Use letters, numbers, single spaces, and dashes only.";
-  }
+  if (normalized.length > 256) return "Pack name must be 256 characters or fewer.";
   return "";
 }
 
 async function openExportCollectionPackFlow(row) {
   return new Promise((resolve) => {
     const wrap = document.createElement("div");
-    wrap.className = "app-modal app-modal--prompt";
+    wrap.className = "app-modal app-modal--prompt app-modal--pack-export";
     wrap.innerHTML = `
       <div class="app-modal__backdrop"></div>
       <div class="app-modal__dialog app-modal__dialog--wide">
@@ -4919,6 +5809,18 @@ async function openExportCollectionPackFlow(row) {
             </div>
           </div>
           <img id="packProfilePreview" alt="" class="app-modal__profile-preview hidden" />
+          <div id="packExportProgressWrap" class="pack-export-progress hidden" aria-live="polite">
+            <div
+              class="pack-export-progress__track"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <div id="packExportProgressBar" class="pack-export-progress__fill"></div>
+            </div>
+            <div id="packExportProgressLabel" class="pack-export-progress__label"></div>
+          </div>
           <div id="packExportError" class="app-modal__error hidden"></div>
         </div>
         <div class="app-modal__footer">
@@ -4934,10 +5836,16 @@ async function openExportCollectionPackFlow(row) {
     const errEl = wrap.querySelector("#packExportError");
     const btnCancel = wrap.querySelector(".app-modal__cancel");
     const btnSubmit = wrap.querySelector(".app-modal__submit");
+    const progressWrap = wrap.querySelector("#packExportProgressWrap");
+    const progressBar = wrap.querySelector("#packExportProgressBar");
+    const progressTrack = wrap.querySelector(".pack-export-progress__track");
+    const progressLabel = wrap.querySelector("#packExportProgressLabel");
     let profileImageDataUrl = null;
+    let packExportInFlight = false;
     input.value = normalizePackName(row.collection?.name || "Collection Pack");
 
     function close() {
+      if (packExportInFlight) return;
       if (!document.body.contains(wrap)) return;
       wrap.classList.add("app-modal--closing");
       setTimeout(() => {
@@ -4986,13 +5894,38 @@ async function openExportCollectionPackFlow(row) {
       }
       showError("");
       btnSubmit.disabled = true;
+      btnCancel.disabled = true;
+      packExportInFlight = true;
+      progressWrap?.classList.remove("hidden");
+      if (progressBar) progressBar.style.width = "0%";
+      if (progressLabel) progressLabel.textContent = "";
+      progressTrack?.setAttribute("aria-valuenow", "0");
+      const stopProgress =
+        typeof window.qooti?.onCollectionPackExportProgress === "function"
+          ? window.qooti.onCollectionPackExportProgress((payload) => {
+              const raw = Number(payload?.percent);
+              const pct = Number.isFinite(raw) ? Math.min(100, Math.max(0, raw)) : 0;
+              if (progressBar) progressBar.style.width = `${pct}%`;
+              progressTrack?.setAttribute("aria-valuenow", String(Math.round(pct)));
+              const msg = payload?.message;
+              if (progressLabel && msg != null && String(msg).trim() !== "") {
+                progressLabel.textContent = String(msg);
+              }
+            })
+          : () => {};
       try {
         const res = await window.qooti.exportCollectionAsPack(row.collection.id, packName, profileImageDataUrl);
         toast(`Exported ${res.bundled} items${res.skipped ? ` (${res.skipped} skipped)` : ""}`, { variant: "success" });
+        packExportInFlight = false;
         close();
       } catch (err) {
         showError(err?.message || "Export failed.");
         btnSubmit.disabled = false;
+        btnCancel.disabled = false;
+        packExportInFlight = false;
+      } finally {
+        stopProgress();
+        progressWrap?.classList.add("hidden");
       }
     });
 
@@ -5086,7 +6019,7 @@ async function chooseTelegramCollectionMode(defaultName) {
     const wrap = document.createElement("div");
     wrap.className = "app-modal app-modal--prompt";
     const collectionOptions = (state.collections || [])
-      .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(formatCollectionDisplayName(c.name))}</option>`)
+      .map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(getCollectionDisplayName(c))}</option>`)
       .join("");
     wrap.innerHTML = `
       <div class="app-modal__backdrop"></div>
@@ -5280,7 +6213,7 @@ function renderCollectionsPage(rows) {
   if (!gridEl) return;
 
   const filtered = query
-    ? rows.filter((row) => (row.collection?.name || "").toLowerCase().includes(query))
+    ? rows.filter((row) => getCollectionDisplayName(row.collection).toLowerCase().includes(query))
     : rows;
   if (countEl) {
     const totalLabel = `${rows.length} collection${rows.length === 1 ? "" : "s"}`;
@@ -5311,7 +6244,7 @@ function renderCollectionsPage(rows) {
         <p class="collections-card__meta"></p>
       </div>
     `;
-    card.querySelector(".collections-card__title").textContent = formatCollectionDisplayName(row.collection?.name) || "Untitled collection";
+    card.querySelector(".collections-card__title").textContent = getCollectionDisplayName(row.collection) || "Untitled collection";
     card.querySelector(".collections-card__count").textContent = `${row.count} item${row.count === 1 ? "" : "s"}`;
     card.querySelector(".collections-card__meta").textContent = formatRelativeTime(Number(row.collection?.updated_at || 0));
 
@@ -5348,7 +6281,7 @@ function renderCollectionsPage(rows) {
       if (e.button !== 0) return; // only navigate on left-click; right-click opens context menu
       state.view = `collection:${row.collection.id}`;
       state.currentCollectionId = row.collection.id;
-      state.currentCollectionName = row.collection?.name || "Collection";
+      state.currentCollectionName = getCollectionDisplayName(row.collection) || "Collection";
       state.selected.clear();
       hideCollectionsView();
       showGrid();
@@ -5402,14 +6335,71 @@ function formatCollectionDisplayName(name) {
   return s.replace(/\s*\(Imported\s+\d+\)\s*$/i, "").trim() || "Collection";
 }
 
+function getCollectionDisplayName(collection) {
+  const lang = state.settings?.language || "en";
+  if (collection?.id === DEFAULT_UNSORTED_COLLECTION_ID) {
+    return t("collections.unsorted", lang);
+  }
+  return formatCollectionDisplayName(collection?.name);
+}
+
+function formatCollectionIndicatorText(collections) {
+  const shorten = (name) => {
+    const chars = Array.from(String(name || ""));
+    if (chars.length <= 7) return String(name || "");
+    return `${chars.slice(0, 7).join("")}...`;
+  };
+  const list = Array.isArray(collections) ? collections : [];
+  if (list.length === 0) return "";
+  const names = list.map((c) => getCollectionDisplayName(c)).filter(Boolean);
+  if (names.length === 0) return "";
+  if (names.length === 1) return shorten(names[0]);
+  return `${shorten(names[0])} +${names.length - 1}`;
+}
+
+function getCachedCollectionLabelText(inspirationId) {
+  return collectionLabelCache.get(inspirationId) || "";
+}
+
+function setCardCollectionLabel(cardEl, labelText) {
+  if (!cardEl) return;
+  const labelEl = cardEl.querySelector(".js-collection-label");
+  if (!labelEl) return;
+  const textEl = labelEl.querySelector(".js-collection-label-text");
+  if (textEl) textEl.textContent = labelText || "";
+  labelEl.style.display = labelText ? "" : "none";
+}
+
+function requestCollectionLabelForItem(item, cardEl) {
+  if (!item?.id || !window.qooti?.getCollectionsForInspiration) return;
+  if (collectionLabelPending.has(item.id)) return;
+  collectionLabelPending.add(item.id);
+  window.qooti
+    .getCollectionsForInspiration(item.id)
+    .then((cols) => {
+      const normalized = Array.isArray(cols) ? cols : [];
+      const text = formatCollectionIndicatorText(normalized);
+      collectionLabelCache.set(item.id, text);
+      setCardCollectionLabel(cardEl, text);
+    })
+    .catch(() => {})
+    .finally(() => {
+      collectionLabelPending.delete(item.id);
+    });
+}
+
 /** Show or hide the collection view bar (back + breadcrumb) and set name when viewing a collection. */
 function updateCollectionViewBar() {
   const bar = $("#collectionViewBar");
   const nameEl = $("#collectionViewBarName");
   if (!bar || !nameEl) return;
   if (state.view.startsWith("collection:")) {
-    const raw = state.currentCollectionName || (state.collections && state.collections.find(c => c.id === state.view.split(":")[1])?.name) || "Collection";
-    nameEl.textContent = formatCollectionDisplayName(raw);
+    const currentId = state.view.split(":")[1];
+    const resolved =
+      state.currentCollectionName ||
+      getCollectionDisplayName(state.collections && state.collections.find((c) => c.id === currentId)) ||
+      "Collection";
+    nameEl.textContent = formatCollectionDisplayName(resolved);
     bar.classList.remove("hidden");
   } else {
     bar.classList.add("hidden");
@@ -5454,9 +6444,29 @@ async function refreshTagFilterBar() {
   const allBtn = $("#tagFilterAll");
   const container = $("#tagFilterPills");
   if (!allBtn || !container) return;
+  const prefs = parseTagFilterBarPrefs();
   try {
-    const topTags = await window.qooti?.getTopTags?.(25);
-    const list = Array.isArray(topTags) ? topTags : [];
+    let allTags = [];
+    try {
+      allTags = (await window.qooti?.listTags?.()) || [];
+    } catch {
+      allTags = [];
+    }
+    if (!Array.isArray(allTags)) allTags = [];
+    const byId = new Map(allTags.map((t) => [t.id, t]));
+
+    let list;
+    if (prefs.order !== null && prefs.order.length > 0) {
+      list = prefs.order
+        .map((id) => {
+          const t = byId.get(id);
+          return t ? { id: t.id, label: t.label || t.id } : null;
+        })
+        .filter(Boolean);
+    } else {
+      list = await getAutoVisibleTagFilterItems();
+    }
+
     container.textContent = "";
     list.forEach((tag) => {
       const btn = document.createElement("button");
@@ -5469,7 +6479,7 @@ async function refreshTagFilterBar() {
     });
     updateTagFilterBarActiveState();
   } catch (e) {
-    console.warn("[qooti] getTopTags failed:", e?.message || e);
+    console.warn("[qooti] refreshTagFilterBar failed:", e?.message || e);
     container.textContent = "";
     updateTagFilterBarActiveState();
   }
@@ -5500,22 +6510,83 @@ function setupTagFilterDragScroll() {
   const scrollEl = document.querySelector(".tag-filter-bar__scroll");
   if (!scrollEl || scrollEl.dataset.dragScrollBound === "1") return;
   scrollEl.dataset.dragScrollBound = "1";
+  /** Portion of distance to target per frame while dragging (low = smooth lag vs pointer). */
+  const DRAG_SCROLL_LERP = 0.07;
+  /** After mouseup, ease the rest of the way (slightly higher = quicker settle, still smooth). */
+  const RELEASE_SCROLL_LERP = Math.min(0.22, Math.max(DRAG_SCROLL_LERP, DRAG_SCROLL_LERP * 2.25));
   let isDown = false;
   let startX = 0;
   let startLeft = 0;
   let suppressClickUntil = 0;
+  let pendingPageX = 0;
+  let scrollRaf = 0;
+  /** When set, animating to this scroll position after release (no instant snap). */
+  let coastTarget = null;
+
+  const clampScrollLeft = (left) => {
+    const max = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
+    return Math.max(0, Math.min(max, left));
+  };
+
+  const tickDragScroll = () => {
+    scrollRaf = 0;
+    let target;
+    if (isDown) {
+      const dx = pendingPageX - startX;
+      if (Math.abs(dx) > 4) suppressClickUntil = Date.now() + 150;
+      target = clampScrollLeft(startLeft - dx);
+    } else if (coastTarget != null) {
+      target = coastTarget;
+    } else {
+      return;
+    }
+
+    const cur = scrollEl.scrollLeft;
+    const diff = target - cur;
+    const lerp = isDown ? DRAG_SCROLL_LERP : RELEASE_SCROLL_LERP;
+
+    if (Math.abs(diff) < 0.55) {
+      scrollEl.scrollLeft = target;
+      if (!isDown && coastTarget != null) {
+        coastTarget = null;
+      }
+    } else {
+      scrollEl.scrollLeft = cur + diff * lerp;
+    }
+
+    const err = Math.abs(target - scrollEl.scrollLeft);
+    if (err > 0.5) {
+      scrollRaf = requestAnimationFrame(tickDragScroll);
+    } else if (!isDown && coastTarget != null) {
+      coastTarget = null;
+    }
+  };
 
   const stopDragging = () => {
     if (!isDown) return;
     isDown = false;
     scrollEl.classList.remove("is-dragging");
     document.body.classList.remove("tag-filter-dragging");
+    const dx = pendingPageX - startX;
+    coastTarget = clampScrollLeft(startLeft - dx);
+    if (Math.abs(coastTarget - scrollEl.scrollLeft) <= 0.5) {
+      scrollEl.scrollLeft = coastTarget;
+      coastTarget = null;
+      return;
+    }
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(tickDragScroll);
   };
 
   scrollEl.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
+    if (scrollRaf) {
+      cancelAnimationFrame(scrollRaf);
+      scrollRaf = 0;
+    }
+    coastTarget = null;
     isDown = true;
     startX = e.pageX;
+    pendingPageX = e.pageX;
     startLeft = scrollEl.scrollLeft;
     suppressClickUntil = 0;
     scrollEl.classList.add("is-dragging");
@@ -5524,9 +6595,8 @@ function setupTagFilterDragScroll() {
 
   window.addEventListener("mousemove", (e) => {
     if (!isDown) return;
-    const dx = e.pageX - startX;
-    if (Math.abs(dx) > 4) suppressClickUntil = Date.now() + 150;
-    scrollEl.scrollLeft = startLeft - dx;
+    pendingPageX = e.pageX;
+    if (!scrollRaf) scrollRaf = requestAnimationFrame(tickDragScroll);
     e.preventDefault();
   });
 
@@ -5551,7 +6621,8 @@ function refreshMediaPreviewItemFromState() {
   mediaPreviewItem = fresh;
 }
 
-async function loadInspirations(shuffle = true) {
+/** @param shuffle If true, randomize the current result set (Shuffle order menu only). Default false: keep API order (newest first). */
+async function loadInspirations(shuffle = false) {
   try {
     const params = {
       query: state.query,
@@ -5568,9 +6639,12 @@ async function loadInspirations(shuffle = true) {
       params.tagId = state.selectedTagId;
     }
     const result = await window.qooti.listInspirations(params);
-    const items = Array.isArray(result) ? result : [];
+    let items = Array.isArray(result) ? result : [];
     if (!Array.isArray(result)) {
       console.warn("[qooti] listInspirations returned non-array:", result);
+    }
+    if (shouldPersonalizeHomeGrid(state) && !shuffle && items.length > 1) {
+      items = applyPersonalizedHomeOrder(items, undefined, getHomePersonalizedHeadCount());
     }
     state.inspirations = items;
     state.inspirationsHasMore = items.length >= GRID_INITIAL_LIMIT;
@@ -5614,6 +6688,13 @@ async function loadMoreInspirations() {
       return;
     }
     state.inspirations = state.inspirations.concat(items);
+    if (shouldPersonalizeHomeGrid(state) && state.inspirations.length > 1) {
+      state.inspirations = applyPersonalizedHomeOrder(
+        state.inspirations,
+        undefined,
+        getHomePersonalizedHeadCount()
+      );
+    }
     state.inspirationsHasMore = items.length >= GRID_LOAD_MORE_LIMIT;
     renderGrid();
   } catch (e) {
@@ -5761,10 +6842,14 @@ async function processExtensionPending() {
         if (isVideo) {
           notifyMediaAdd("Downloading video…", { durationMs: 2000, variant: "info" });
           const result = await withExtensionTimeout(
-            window.qooti.downloadVideoFromUrl(url, title || undefined),
+            downloadVideoWithProgressUI(url, title || undefined),
             EXTENSION_OP_MS,
             "Video download timed out"
           );
+          if (result?.cancelled) {
+            console.log("[qooti] extension video download cancelled:", url.slice(0, 120));
+            return;
+          }
           const insp = result?.inspiration;
           const item = insp ? { id: insp.id, type: insp.type || "video", title: insp.title, tags: insp.tags || [] } : null;
           await refreshData();
@@ -5830,12 +6915,22 @@ function buildCard(it) {
     const showMediaTitle = s.showMediaTitle !== "false";
     const showTitlesOnHover = s.showTitlesOnHover !== "false";
     const showSourceLabels = s.showSourceLabels !== "false";
-    const showCollectionIndicator = s.showCollectionIndicator === "true";
+    const showCollectionIndicator = s.showCollectionIndicator !== "false";
     const hasCustomTitle = showMediaTitle && it.title && it.title !== it.original_filename;
     const src = sourceType(it);
     const label = SOURCE_LABELS[src] || SOURCE_LABELS.web;
-    const collectionName = state.view?.startsWith("collection:") ? formatCollectionDisplayName(state.currentCollectionName || "Collection") : "";
-    const collectionLabel = showCollectionIndicator && collectionName ? `<span class="card-label card-label--collection"><span>${escapeHtml(collectionName)}</span></span>` : "";
+    const inCollectionView = state.view?.startsWith("collection:");
+    const currentCollectionId = inCollectionView ? state.view.split(":")[1] : "";
+    const collectionName = inCollectionView
+      ? formatCollectionIndicatorText([
+        { id: currentCollectionId, name: state.currentCollectionName || "Collection" }
+      ])
+      : getCachedCollectionLabelText(it.id);
+    const showCollectionLabel = showCollectionIndicator && !!collectionName;
+    const collectionIcon = remixIcon("collection.svg", "ui-icon ui-icon--sm card-label__icon");
+    const collectionLabel = `<span class="card-label card-label--collection js-collection-label" ${
+      showCollectionLabel ? "" : 'style="display:none"'
+    }>${collectionIcon}<span class="js-collection-label-text">${escapeHtml(collectionName)}</span></span>`;
 
     const thumbContent =
       isLocalVideo
@@ -5860,6 +6955,9 @@ function buildCard(it) {
       </div>
     `;
     card.classList.toggle("card--show-title-always", !showTitlesOnHover);
+    if (showCollectionIndicator && !inCollectionView && !collectionName) {
+      requestCollectionLabelForItem(it, card);
+    }
 
     if (isLocalVideo && mediaUrl) {
       const video = card.querySelector(".thumb__video");
@@ -5937,9 +7035,13 @@ function buildCard(it) {
       e.dataTransfer.effectAllowed = "copyMove";
       e.dataTransfer.setData(ROW_MOVE_TYPE, JSON.stringify({ id: it.id, fromRow }));
       const absPath = it.stored_path_abs || it.thumbnail_path_abs;
+      const relPath = it.stored_path || it.thumbnail_path || "";
       if (absPath) {
+        const fileUri = toFileUri(absPath);
         e.dataTransfer.setData("text/plain", absPath);
-        e.dataTransfer.setData("text/uri-list", "file:///" + absPath.replace(/\\/g, "/").replace(/^\/+/, ""));
+        if (fileUri) e.dataTransfer.setData("text/uri-list", fileUri);
+        const downloadUrl = dragDownloadUrl(absPath, relPath);
+        if (downloadUrl) e.dataTransfer.setData("DownloadURL", downloadUrl);
       }
       card.classList.add("card--dragging");
       if (fromRow === "main") {
@@ -5958,6 +7060,11 @@ function buildCard(it) {
 const GUTTER_PX = 18;
 const shortFormExpansion = new Map();
 
+/** True when a named tag pill is active (e.g. "apple"). All / Recent only keep collapsible short rows. */
+function isSpecificTagPillFilterActive() {
+  return !!(state.selectedTagId && String(state.selectedTagId).trim());
+}
+
 function computeLongFormCols(containerWidth) {
   const s = state.settings;
   const density = s.gridDensity || "comfortable";
@@ -5968,6 +7075,33 @@ function computeLongFormCols(containerWidth) {
   const padding = 2 * GUTTER_PX;
   const available = Math.max(0, containerWidth - padding);
   return Math.max(1, Math.floor(available / (cardMin + GUTTER_PX)));
+}
+
+/** Item count for “relatable” top of home feed ≈ three long-form rows (no extra UI). */
+function getHomePersonalizedHeadCount() {
+  const gridView = $("#gridView");
+  const w = gridView?.offsetWidth || Math.min(1280, Math.max(400, (typeof window !== "undefined" ? window.innerWidth : 1100) - 40));
+  const cols = computeLongFormCols(w);
+  return Math.max(6, cols * 3);
+}
+
+/** Min track width for short-form grid — must match CSS --short-card-width (incl. data-card-size). */
+function getShortCardMinPx() {
+  const raw = getComputedStyle(document.documentElement).getPropertyValue("--short-card-width").trim();
+  const m = /^(\d+(?:\.\d+)?)px$/i.exec(raw);
+  if (m) return Math.max(80, Math.round(parseFloat(m[1])));
+  const cardSize = document.documentElement.dataset.cardSize || "medium";
+  if (cardSize === "small") return 120;
+  if (cardSize === "large") return 170;
+  return 140;
+}
+
+/** Columns that fit in the short-form row (narrow cards); used to size interleaved short chunks (2 rows per section). */
+function computeShortFormCols(containerWidth) {
+  const shortMin = getShortCardMinPx();
+  const padding = 2 * GUTTER_PX;
+  const available = Math.max(0, containerWidth - padding);
+  return Math.max(1, Math.floor(available / (shortMin + GUTTER_PX)));
 }
 
 function chunkArray(items, size) {
@@ -5987,7 +7121,9 @@ function renderItemsIntoGrid(gridEl, items) {
 
 function measureShortFormHeights(gridEl) {
   const cards = Array.from(gridEl?.children || []);
-  if (cards.length === 0) return { oneRowHeight: 0, threeRowsHeight: 0, totalHeight: 0, rowCount: 0 };
+  if (cards.length === 0) {
+    return { oneRowHeight: 0, twoRowsHeight: 0, totalHeight: 0, rowCount: 0, rowTops: [] };
+  }
 
   const tops = [];
   for (const card of cards) {
@@ -6005,19 +7141,20 @@ function measureShortFormHeights(gridEl) {
   }
   const oneRowHeight = Math.max(1, firstBottom - firstTop);
 
-  const thirdRowTop = tops[Math.min(2, tops.length - 1)];
-  let thirdBottom = thirdRowTop;
+  const secondRowTop = tops[Math.min(1, tops.length - 1)];
+  let secondRowBottom = secondRowTop;
   for (const card of cards) {
-    if (Math.abs(card.offsetTop - thirdRowTop) <= 1) {
-      thirdBottom = Math.max(thirdBottom, card.offsetTop + card.offsetHeight);
+    if (Math.abs(card.offsetTop - secondRowTop) <= 1) {
+      secondRowBottom = Math.max(secondRowBottom, card.offsetTop + card.offsetHeight);
     }
   }
   const totalHeight = gridEl.scrollHeight;
-  const threeRowsHeight = tops.length >= 3
-    ? Math.max(oneRowHeight * 3, thirdBottom - firstTop)
-    : Math.min(totalHeight, Math.max(oneRowHeight, totalHeight));
+  const twoRowsHeight =
+    tops.length >= 2
+      ? Math.max(oneRowHeight * 2, secondRowBottom - firstTop)
+      : Math.min(totalHeight, Math.max(oneRowHeight, totalHeight));
 
-  return { oneRowHeight, threeRowsHeight, totalHeight, rowCount: tops.length };
+  return { oneRowHeight, twoRowsHeight, totalHeight, rowCount: tops.length, rowTops: tops };
 }
 
 function applyShortFormSectionState(sectionEl, itemCount) {
@@ -6026,13 +7163,32 @@ function applyShortFormSectionState(sectionEl, itemCount) {
   const toggleBtn = sectionEl.querySelector("[data-short-toggle]");
   if (!gridEl || !toggleBtn) return;
 
+  if (isSpecificTagPillFilterActive()) {
+    gridEl.style.maxHeight = "none";
+    gridEl.style.overflow = "visible";
+    toggleBtn.classList.add("hidden");
+    toggleBtn.setAttribute("aria-expanded", "false");
+    toggleBtn.onclick = null;
+    return;
+  }
+
+  gridEl.style.overflow = "";
+
   const key = sectionEl.dataset.shortSectionKey || sectionEl.id || "short-form-default";
   const expanded = shortFormExpansion.get(key) === true;
-  const { oneRowHeight, threeRowsHeight, totalHeight, rowCount } = measureShortFormHeights(gridEl);
+  const { oneRowHeight, twoRowsHeight, totalHeight, rowCount, rowTops } = measureShortFormHeights(gridEl);
   const canToggle = itemCount > 0 && rowCount > 1;
+  const collapsedHeight =
+    rowCount >= 2
+      ? Math.max(1, Math.floor((rowTops[1] - rowTops[0]) - 0.5))
+      : Math.max(1, oneRowHeight);
+  const expandedTwoRowsHeight =
+    rowCount >= 3
+      ? Math.max(collapsedHeight, Math.floor((rowTops[2] - rowTops[0]) - 0.5))
+      : Math.max(collapsedHeight, twoRowsHeight);
   const targetHeight = expanded
-    ? Math.min(totalHeight, Math.max(threeRowsHeight, oneRowHeight))
-    : oneRowHeight;
+    ? Math.min(totalHeight, Math.max(expandedTwoRowsHeight, collapsedHeight))
+    : Math.min(totalHeight, collapsedHeight);
 
   gridEl.style.maxHeight = `${Math.max(0, targetHeight)}px`;
   toggleBtn.classList.toggle("hidden", !canToggle);
@@ -6045,6 +7201,17 @@ function applyShortFormSectionState(sectionEl, itemCount) {
     const afterTop = sectionEl.getBoundingClientRect().top;
     window.scrollBy(0, afterTop - beforeTop);
   };
+
+  // Cards can settle a frame later (image decode/font metrics). Re-apply once for exact clipping.
+  const settleToken = `${itemCount}:${gridEl.childElementCount}`;
+  if (sectionEl.dataset.shortMeasureToken !== settleToken) {
+    sectionEl.dataset.shortMeasureToken = settleToken;
+    setTimeout(() => {
+      if (!sectionEl.isConnected) return;
+      if (sectionEl.dataset.shortMeasureToken !== settleToken) return;
+      applyShortFormSectionState(sectionEl, itemCount);
+    }, 90);
+  }
 }
 
 function createInjectedLongSection(items, index) {
@@ -6131,11 +7298,13 @@ function renderGrid() {
     }
   }
 
-  const cols = gridView ? computeLongFormCols(gridView.offsetWidth) : 4;
-  const longChunkSize = Math.max(1, 2 * cols);
-  const shortChunkSize = Math.max(1, 3 * cols);
+  const longCols = gridView ? computeLongFormCols(gridView.offsetWidth) : 4;
+  const shortCols = gridView ? computeShortFormCols(gridView.offsetWidth) : Math.max(1, longCols);
+  const longChunkSize = Math.max(1, 2 * longCols);
+  const shortChunkSize = Math.max(1, 2 * shortCols);
   const longChunks = chunkArray(mainItems, longChunkSize);
-  const shouldInterleaveShortRows = shortFormItems.length > 20 && longChunks.length > 1;
+  const shouldInterleaveShortRows =
+    shortFormItems.length > shortChunkSize && longChunks.length > 1;
   const shortChunks = shouldInterleaveShortRows
     ? chunkArray(shortFormItems, shortChunkSize)
     : [shortFormItems];
@@ -6207,9 +7376,127 @@ function setupGridResizeObserver() {
 let mediaPreviewItem = null;
 let mediaPreviewCollections = [];
 let copyKeyHandler = null;
+let mediaPreviewKeyHandler = null;
+let mediaPreviewVideoCleanup = null;
+let mediaPreviewLocalVideo = null;
+let mediaPreviewYoutubePlayer = null;
+let mediaPreviewYoutubeTicker = null;
 let ocrDebugChordArmedUntil = 0;
 let reelFeedItems = [];
 let reelFeedScrollHandler = null;
+
+function setMediaPreviewBackgroundBlur(active) {
+  // Blur main content only — keep `header.title-bar` (window chrome) sharp.
+  const blurRoot = document.querySelector("#app .app__main");
+  if (!blurRoot) return;
+  blurRoot.style.transition = "filter 0.25s ease";
+  blurRoot.style.filter = active ? "blur(12px)" : "none";
+}
+
+function getSavedPlayerVolume() {
+  const raw = state?.settings?.player_volume;
+  const parsed = Number.parseFloat(String(raw ?? ""));
+  if (Number.isFinite(parsed)) return Math.max(0, Math.min(1, parsed));
+  return 0.8;
+}
+
+function persistPlayerVolume(level) {
+  const next = Math.max(0, Math.min(1, Number(level) || 0));
+  state.settings.player_volume = String(next);
+  saveSetting("player_volume", next).catch(() => {});
+}
+
+function clearMediaPreviewExternalPlayer() {
+  if (mediaPreviewYoutubeTicker) {
+    clearInterval(mediaPreviewYoutubeTicker);
+    mediaPreviewYoutubeTicker = null;
+  }
+  if (mediaPreviewYoutubePlayer?.destroy) {
+    try {
+      mediaPreviewYoutubePlayer.destroy();
+    } catch (_) {}
+  }
+  mediaPreviewYoutubePlayer = null;
+  mediaPreviewLocalVideo = null;
+}
+
+function formatPreviewFileSize(bytesLike) {
+  const n = Number(bytesLike);
+  if (!Number.isFinite(n) || n <= 0) return "—";
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function mediaPreviewTypeLabel(it) {
+  const lang = (state.settings?.language || "en").toLowerCase() === "uz" ? "uz" : "en";
+  const key =
+    it?.type === "video"
+      ? "preview.typeVideo"
+      : it?.type === "link"
+        ? "preview.typeLink"
+        : it?.type === "gif"
+          ? "preview.typeGif"
+          : "preview.typeImage";
+  return t(key, lang);
+}
+
+function mediaPreviewSequence() {
+  const reelFeedEl = $("#mediaPreviewReelFeed");
+  if (reelFeedEl && !reelFeedEl.classList.contains("hidden") && reelFeedItems.length > 0) return reelFeedItems;
+  return Array.isArray(state.inspirations) ? state.inspirations : [];
+}
+
+function mediaPreviewCurrentIndex(items = mediaPreviewSequence()) {
+  if (!mediaPreviewItem?.id || !Array.isArray(items) || items.length === 0) return -1;
+  return items.findIndex((x) => x.id === mediaPreviewItem.id);
+}
+
+function updateMediaPreviewCounter() {
+  const counterEl = $("#mediaPreviewCounter");
+  if (!counterEl) return;
+  const items = mediaPreviewSequence();
+  const idx = mediaPreviewCurrentIndex(items);
+  const current = idx >= 0 ? idx + 1 : 0;
+  counterEl.textContent = `${current} / ${items.length || 0}`;
+  const disabled = items.length <= 1;
+  ["mediaPreviewPrevSide", "mediaPreviewNextSide"].forEach((id) => {
+    const btn = $("#" + id);
+    if (!btn) return;
+    btn.toggleAttribute("disabled", disabled);
+  });
+}
+
+function setMediaPreviewDimensions(width, height) {
+  const el = $("#mediaPreviewDimensions");
+  if (!el) return;
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    el.textContent = "—";
+    return;
+  }
+  el.textContent = `${Math.round(width)}×${Math.round(height)}`;
+}
+
+async function navigateMediaPreview(delta) {
+  const items = mediaPreviewSequence();
+  if (!items.length || !mediaPreviewItem?.id) return;
+  const idx = mediaPreviewCurrentIndex(items);
+  if (idx < 0) return;
+  const next = (idx + delta + items.length) % items.length;
+  const target = items[next];
+  const reelFeedEl = $("#mediaPreviewReelFeed");
+  if (reelFeedEl && !reelFeedEl.classList.contains("hidden")) {
+    const h = reelFeedEl.clientHeight || 0;
+    if (h > 0) reelFeedEl.scrollTo({ top: next * h, behavior: "smooth" });
+    mediaPreviewItem = target;
+    updateReelHeader(target);
+    pauseAllReelMediaExcept(reelFeedEl, next);
+    updateMediaPreviewCounter();
+    return;
+  }
+  await showMediaPreview(target);
+}
 
 function buildReelSlideMedia(it) {
   const frame = document.createElement("div");
@@ -6263,126 +7550,557 @@ function buildReelSlideMedia(it) {
 function updateReelHeader(it) {
   const titleEl = $("#mediaPreviewTitle");
   const badgeEl = $("#mediaPreviewBadge");
-  const tagsEl = $("#mediaPreviewTags");
+  const typeEl = $("#mediaPreviewType");
+  const sizeEl = $("#mediaPreviewSize");
   if (titleEl) titleEl.textContent = truncateForDialog(it?.title || it?.original_filename || "Untitled", 55);
-  const srcType = sourceType(it);
-  const platformLabel = SOURCE_LABELS[srcType]?.text ?? "Link";
   if (badgeEl) {
-    badgeEl.textContent = srcType === "local" ? "Local" : platformLabel;
-    badgeEl.className = "media-preview__badge media-preview__badge--" + srcType;
+    badgeEl.textContent = t("preview.localBadge", (state.settings?.language || "en"));
+    badgeEl.className = "media-preview__badge media-preview__badge--local";
   }
-  if (tagsEl) {
-    const tagLabels = (it.tags || []).map((t) => t.label || t).filter(Boolean).slice(0, 3);
-    tagsEl.innerHTML = tagLabels.map((l) => `<span class="media-preview__tag">${escapeHtml(l)}</span>`).join("");
-    tagsEl.classList.toggle("hidden", tagLabels.length === 0);
+  if (typeEl) typeEl.textContent = mediaPreviewTypeLabel(it);
+  if (sizeEl) {
+    const sizeBytes = it?.size_bytes ?? it?.file_size ?? it?.bytes ?? null;
+    sizeEl.textContent = formatPreviewFileSize(sizeBytes);
   }
+  setMediaPreviewDimensions(NaN, NaN);
+  updateMediaPreviewCounter();
   syncMediaPreviewActionState(it);
 }
 
 function syncMediaPreviewActionState(it) {
-  const quickActions = $("#mediaPreviewQuickActions");
   const pathToCopy = getMediaPreviewPathToCopy(it);
-  if (quickActions) {
-    const copyBtn = quickActions.querySelector('[data-action="copy"]');
-    const downloadBtn = quickActions.querySelector('[data-action="download"]');
-    const openBtn = quickActions.querySelector('[data-action="open-source"]');
-    if (copyBtn) copyBtn.classList.toggle("hidden", !pathToCopy);
-    if (downloadBtn) downloadBtn.classList.toggle("hidden", !it?.source_url);
-    if (openBtn) openBtn.classList.toggle("hidden", !it?.source_url);
-  }
+  $("#mediaPreviewCopy")?.toggleAttribute("disabled", !pathToCopy);
   const requiresId = !it?.id;
   $("#mediaPreviewAddToCollection")?.toggleAttribute("disabled", requiresId);
   $("#mediaPreviewEditTags")?.toggleAttribute("disabled", requiresId);
   $("#mediaPreviewFindRelated")?.toggleAttribute("disabled", requiresId);
+  updateMediaPreviewCounter();
 }
 
-/** Wire video inspector: frame hold on click, timeline as frame selector, step ±1s, copy frame. No autoplay on scrub. */
-function wireVideoInspector(video, _item) {
-  const timelineEl = $("#mediaPreviewTimeline");
-  const stepBackBtn = $("#mediaPreviewStepBack");
-  const stepFwdBtn = $("#mediaPreviewStepFwd");
-  const copyFrameBtn = $("#mediaPreviewCopyFrame");
-  if (!video) return;
+function formatMediaTime(sec) {
+  const n = Number.isFinite(sec) ? Math.max(0, sec) : 0;
+  const mm = Math.floor(n / 60);
+  const ss = Math.floor(n % 60);
+  return `${mm}:${String(ss).padStart(2, "0")}`;
+}
 
-  // Click video to play/pause — play to preview motion, pause to hold frame
-  video.addEventListener("click", () => {
-    if (video.paused) {
-      video.play().catch(() => {});
-    } else {
-      video.pause();
-    }
-  });
+function setMediaPreviewButtonIcon(btn, iconUrl) {
+  const icon = btn?.querySelector(".ui-icon");
+  if (icon) icon.style.setProperty("--icon-url", iconUrl);
+}
 
-  const updateTimelineFromVideo = () => {
-    if (!timelineEl || !video.duration || !isFinite(video.duration)) return;
-    const pct = (video.currentTime / video.duration) * 100;
-    timelineEl.value = String(pct);
-  };
+function updateMediaPreviewVolumeIcon(btn, level, isMuted) {
+  const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
+  const iconUrl =
+    isMuted || safeLevel <= 0.0001
+      ? "url('assets/icons/player/volume-mute-fill.svg')"
+      : safeLevel <= 0.5
+        ? "url('assets/icons/player/volume-down-fill.svg')"
+        : "url('assets/icons/player/volume-up-line.svg')";
+  setMediaPreviewButtonIcon(btn, iconUrl);
+}
 
-  const updateVideoFromTimeline = () => {
-    if (!timelineEl || !video.duration || !isFinite(video.duration)) return;
-    const pct = Number(timelineEl.value) || 0;
-    video.currentTime = (pct / 100) * video.duration;
-  };
-
-  video.addEventListener("timeupdate", updateTimelineFromVideo);
-  video.addEventListener("loadedmetadata", () => {
-    if (timelineEl) timelineEl.max = "100";
-    updateTimelineFromVideo();
-  });
-  video.addEventListener("loadeddata", updateTimelineFromVideo);
-
-  // Timeline scrub: frame selector only, no play
-  if (timelineEl) {
-    let isScrubbing = false;
-    const startScrub = () => { isScrubbing = true; video.pause(); };
-    const endScrub = () => { isScrubbing = false; };
-    timelineEl.onmousedown = startScrub;
-    timelineEl.ontouchstart = startScrub;
-    timelineEl.onmouseup = endScrub;
-    timelineEl.ontouchend = endScrub;
-    timelineEl.oninput = () => {
-      updateVideoFromTimeline();
-      if (!isScrubbing) video.pause();
-    };
-    timelineEl.onchange = () => { video.pause(); };
-  }
-
-  if (stepBackBtn) {
-    stepBackBtn.onclick = () => {
-      video.pause();
-      video.currentTime = Math.max(0, video.currentTime - 1);
-      updateTimelineFromVideo();
-    };
-  }
-  if (stepFwdBtn) {
-    stepFwdBtn.onclick = () => {
-      video.pause();
-      video.currentTime = Math.min(video.duration || 0, video.currentTime + 1);
-      updateTimelineFromVideo();
-    };
-  }
-  if (copyFrameBtn) {
-    copyFrameBtn.onclick = async () => {
-      video.pause();
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) throw new Error("Canvas context unavailable");
-        ctx.drawImage(video, 0, 0);
-        const blob = await new Promise((res, rej) =>
-          canvas.toBlob((b) => (b ? res(b) : rej(new Error("toBlob failed"))), "image/png")
-        );
-        if (!blob) throw new Error("No blob");
-        await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-        toast("Frame copied to clipboard", { variant: "success" });
-      } catch (e) {
-        toast(e?.message || "Could not copy frame", { variant: "error" });
+function htmlVideoSeekableRange(video) {
+  try {
+    const sb = video.seekable;
+    if (sb && sb.length > 0) {
+      const start = sb.start(0);
+      const end = sb.end(sb.length - 1);
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        return { start, end };
       }
-    };
+    }
+  } catch (_) {}
+  return null;
+}
+
+function htmlVideoEffectiveDuration(video) {
+  const d = Number(video.duration);
+  if (Number.isFinite(d) && d > 0 && d !== Number.POSITIVE_INFINITY) return d;
+  const r = htmlVideoSeekableRange(video);
+  return r && Number.isFinite(r.end) && r.end > 0 ? r.end : 0;
+}
+
+function clampHtmlVideoSeekTime(video, t) {
+  const raw = Number(t);
+  if (!Number.isFinite(raw)) return 0;
+  const dur = Number(video.duration);
+  const r = htmlVideoSeekableRange(video);
+  const finiteDur =
+    Number.isFinite(dur) && dur > 0 && dur !== Number.POSITIVE_INFINITY;
+
+  if (finiteDur) {
+    let lo = 0;
+    let hi = dur;
+    if (r && r.end > 0) {
+      const slack = Math.min(0.25, dur * 0.05);
+      if (r.end >= dur - slack) {
+        lo = Math.max(0, r.start);
+        hi = Math.min(dur, r.end);
+      }
+    }
+    return Math.max(lo, Math.min(hi, raw));
   }
+
+  if (r) return Math.max(r.start, Math.min(r.end, raw));
+  return Math.max(0, raw);
+}
+
+function wireVideoInspector(video, _item) {
+  const overlay = $("#mediaPreviewVideoOverlay");
+  const timelineWrap = $("#mediaPreviewTimelineWrap");
+  const timelineTrack = $("#mediaPreviewTimelineTrack");
+  const timelineBuffered = $("#mediaPreviewTimelineBuffered");
+  const timelineProgress = $("#mediaPreviewTimelineProgress");
+  const timelineThumb = $("#mediaPreviewTimelineThumb");
+  const playPauseBtn = $("#mediaPreviewPlayPause");
+  const timeEl = $("#mediaPreviewTime");
+  const muteBtn = $("#mediaPreviewMute");
+  const volWrap = $("#mediaPreviewVolumeWrap");
+  const volProgress = $("#mediaPreviewVolumeProgress");
+  const volThumb = $("#mediaPreviewVolumeThumb");
+  if (!video || !overlay) return;
+
+  if (typeof mediaPreviewVideoCleanup === "function") {
+    mediaPreviewVideoCleanup();
+    mediaPreviewVideoCleanup = null;
+  }
+  clearMediaPreviewExternalPlayer();
+  mediaPreviewLocalVideo = video;
+  overlay.classList.remove("hidden");
+  setMediaPreviewDimensions(video.videoWidth, video.videoHeight);
+
+  const playIcon = "url('assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('assets/icons/player/pause-icon.svg')";
+  const setTimelineReady = (ready) => {
+    if (!timelineWrap) return;
+    timelineWrap.style.pointerEvents = ready ? "auto" : "none";
+    timelineWrap.style.opacity = ready ? "1" : "0.4";
+  };
+
+  const syncTimeline = () => {
+    const duration = htmlVideoEffectiveDuration(video);
+    const current = Number(video.currentTime) || 0;
+    const pct = duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
+    const bufferedEnd =
+      duration > 0 && video.buffered && video.buffered.length > 0
+        ? Math.max(0, Math.min(1, video.buffered.end(video.buffered.length - 1) / duration))
+        : 0;
+    if (timelineProgress) timelineProgress.style.width = `${pct * 100}%`;
+    if (timelineThumb) timelineThumb.style.left = `${pct * 100}%`;
+    if (timelineBuffered) timelineBuffered.style.width = `${bufferedEnd * 100}%`;
+    if (timeEl) timeEl.textContent = `${formatMediaTime(current)} / ${formatMediaTime(duration)}`;
+    setMediaPreviewButtonIcon(playPauseBtn, video.paused ? playIcon : pauseIcon);
+    if (duration > 0) setTimelineReady(true);
+  };
+
+  const syncVolume = () => {
+    const level = video.muted ? 0 : Number(video.volume) || 0;
+    if (volProgress) volProgress.style.width = `${level * 100}%`;
+    if (volThumb) volThumb.style.left = `${level * 100}%`;
+    updateMediaPreviewVolumeIcon(muteBtn, level, video.muted);
+  };
+
+  const applySeekPct = (pct) => {
+    const duration = htmlVideoEffectiveDuration(video);
+    if (!duration || Number.isNaN(duration) || duration === 0) {
+      return;
+    }
+    const nextTime = clampHtmlVideoSeekTime(video, pct * duration);
+    video.currentTime = nextTime;
+  };
+  const seekFromClientX = (clientX) => {
+    const seekRoot = timelineTrack || timelineWrap;
+    if (!seekRoot) return;
+    const rect = seekRoot.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const duration = htmlVideoEffectiveDuration(video);
+    if (!duration || Number.isNaN(duration) || duration === 0) {
+      console.warn(`[seek] blocked | reason=duration_not_ready | duration=${duration}`);
+      return;
+    }
+    const target = clampHtmlVideoSeekTime(video, pct * duration);
+    console.log(
+      `[seek] | pct=${pct.toFixed(3)} | target=${target.toFixed(2)}s | duration=${duration.toFixed(2)}s | seekable=${JSON.stringify(htmlVideoSeekableRange(video))}`
+    );
+    applySeekPct(pct);
+    syncTimeline();
+  };
+
+  const volumeFromClientX = (clientX) => {
+    if (!volWrap) return;
+    const rect = volWrap.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    video.volume = pct;
+    if (video.muted && pct > 0) video.muted = false;
+    persistPlayerVolume(video.muted ? 0 : pct);
+    syncVolume();
+  };
+
+  let isScrubbing = false;
+  let scrubPointerId = null;
+  let isVolumeDragging = false;
+
+  const onTimelinePointerDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    isScrubbing = true;
+    scrubPointerId = e.pointerId;
+    timelineWrap?.setPointerCapture?.(e.pointerId);
+    seekFromClientX(e.clientX);
+  };
+  const onTimelinePointerMove = (e) => {
+    if (!isScrubbing) return;
+    if (scrubPointerId != null && e.pointerId !== scrubPointerId) return;
+    seekFromClientX(e.clientX);
+  };
+  const onTimelinePointerUpOrCancel = (e) => {
+    if (scrubPointerId != null && e.pointerId !== scrubPointerId) return;
+    isScrubbing = false;
+    if (scrubPointerId != null) {
+      timelineWrap?.releasePointerCapture?.(scrubPointerId);
+    }
+    scrubPointerId = null;
+  };
+  const onVolumeMouseDown = (e) => {
+    isVolumeDragging = true;
+    volumeFromClientX(e.clientX);
+  };
+  timelineWrap?.addEventListener("pointerdown", onTimelinePointerDown);
+  timelineWrap?.addEventListener("pointermove", onTimelinePointerMove);
+  timelineWrap?.addEventListener("pointerup", onTimelinePointerUpOrCancel);
+  timelineWrap?.addEventListener("pointercancel", onTimelinePointerUpOrCancel);
+  volWrap?.addEventListener("mousedown", onVolumeMouseDown);
+
+  const onMouseMove = (e) => {
+    if (isVolumeDragging) volumeFromClientX(e.clientX);
+  };
+  const onMouseUp = () => {
+    isScrubbing = false;
+    scrubPointerId = null;
+    isVolumeDragging = false;
+  };
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  const onVideoClick = () => {
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+    syncTimeline();
+  };
+  const onLoadedMetadata = () => {
+    setMediaPreviewDimensions(video.videoWidth, video.videoHeight);
+    const eff = htmlVideoEffectiveDuration(video);
+    setTimelineReady(eff > 0);
+    console.log(
+      `[player] metadata loaded | duration=${(Number(video.duration) || 0).toFixed(2)}s | effective=${eff.toFixed(2)}s`
+    );
+    syncTimeline();
+    syncVolume();
+  };
+  const onLoadStart = () => {
+    setTimelineReady(false);
+  };
+  video.addEventListener("click", onVideoClick);
+  video.addEventListener("loadstart", onLoadStart);
+  video.addEventListener("timeupdate", syncTimeline);
+  video.addEventListener("progress", syncTimeline);
+  video.addEventListener("loadedmetadata", onLoadedMetadata);
+  video.addEventListener("durationchange", syncTimeline);
+  video.addEventListener("play", syncTimeline);
+  video.addEventListener("pause", syncTimeline);
+  video.addEventListener("volumechange", syncVolume);
+
+  const onPlayPauseClick = () => {
+    if (video.paused) video.play().catch(() => {});
+    else video.pause();
+    syncTimeline();
+  };
+  const onMuteClick = () => {
+    video.muted = !video.muted;
+    persistPlayerVolume(video.muted ? 0 : Number(video.volume) || 0);
+    syncVolume();
+  };
+  const onVolumeClick = (e) => volumeFromClientX(e.clientX);
+  playPauseBtn?.addEventListener("click", onPlayPauseClick);
+  muteBtn?.addEventListener("click", onMuteClick);
+  volWrap?.addEventListener("click", onVolumeClick);
+
+  const savedVolume = getSavedPlayerVolume();
+  video.volume = savedVolume;
+  video.muted = savedVolume <= 0.0001;
+  setTimelineReady(htmlVideoEffectiveDuration(video) > 0);
+  syncTimeline();
+  syncVolume();
+  video.play().catch((err) => {
+    console.warn("[player] autoplay blocked:", err);
+    syncTimeline();
+  });
+
+  mediaPreviewVideoCleanup = () => {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    timelineWrap?.removeEventListener("pointerdown", onTimelinePointerDown);
+    timelineWrap?.removeEventListener("pointermove", onTimelinePointerMove);
+    timelineWrap?.removeEventListener("pointerup", onTimelinePointerUpOrCancel);
+    timelineWrap?.removeEventListener("pointercancel", onTimelinePointerUpOrCancel);
+    volWrap?.removeEventListener("mousedown", onVolumeMouseDown);
+    video.removeEventListener("click", onVideoClick);
+    video.removeEventListener("loadstart", onLoadStart);
+    video.removeEventListener("timeupdate", syncTimeline);
+    video.removeEventListener("progress", syncTimeline);
+    video.removeEventListener("loadedmetadata", onLoadedMetadata);
+    video.removeEventListener("durationchange", syncTimeline);
+    video.removeEventListener("play", syncTimeline);
+    video.removeEventListener("pause", syncTimeline);
+    video.removeEventListener("volumechange", syncVolume);
+    playPauseBtn?.removeEventListener("click", onPlayPauseClick);
+    muteBtn?.removeEventListener("click", onMuteClick);
+    volWrap?.removeEventListener("click", onVolumeClick);
+    mediaPreviewLocalVideo = null;
+  };
+}
+
+async function initMediaPreviewYouTubePlayer(hostEl, videoId) {
+  await loadYouTubeAPI();
+  return new Promise((resolve, reject) => {
+    const savedVolume = getSavedPlayerVolume();
+    new window.YT.Player(hostEl, {
+      videoId,
+      playerVars: {
+        autoplay: 1,
+        controls: 0,
+        disablekb: 1,
+        modestbranding: 1,
+        rel: 0,
+        iv_load_policy: 3,
+        fs: 0,
+        playsinline: 1
+      },
+      events: {
+        onReady: (e) => {
+          try {
+            e.target.setVolume(Math.round(savedVolume * 100));
+            if (savedVolume <= 0.0001) e.target.mute();
+            else e.target.unMute();
+            e.target.playVideo();
+          } catch (_) {}
+          resolve(e.target);
+        },
+        onError: (e) => reject(new Error(`YouTube player error: ${e?.data ?? "unknown"}`))
+      }
+    });
+  });
+}
+
+function wireYouTubeInspector(player) {
+  const overlay = $("#mediaPreviewVideoOverlay");
+  const timelineWrap = $("#mediaPreviewTimelineWrap");
+  const timelineTrack = $("#mediaPreviewTimelineTrack");
+  const timelineBuffered = $("#mediaPreviewTimelineBuffered");
+  const timelineProgress = $("#mediaPreviewTimelineProgress");
+  const timelineThumb = $("#mediaPreviewTimelineThumb");
+  const playPauseBtn = $("#mediaPreviewPlayPause");
+  const timeEl = $("#mediaPreviewTime");
+  const muteBtn = $("#mediaPreviewMute");
+  const volWrap = $("#mediaPreviewVolumeWrap");
+  const volProgress = $("#mediaPreviewVolumeProgress");
+  const volThumb = $("#mediaPreviewVolumeThumb");
+  if (!player || !overlay) return;
+
+  if (typeof mediaPreviewVideoCleanup === "function") {
+    mediaPreviewVideoCleanup();
+    mediaPreviewVideoCleanup = null;
+  }
+  mediaPreviewYoutubePlayer = player;
+  overlay.classList.remove("hidden");
+  setMediaPreviewDimensions(16, 9);
+
+  const playIcon = "url('assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('assets/icons/player/pause-icon.svg')";
+  const setTimelineReady = (ready) => {
+    if (!timelineWrap) return;
+    timelineWrap.style.pointerEvents = ready ? "auto" : "none";
+    timelineWrap.style.opacity = ready ? "1" : "0.4";
+  };
+  const ytPlaying = () => {
+    try {
+      return player.getPlayerState() === window.YT?.PlayerState?.PLAYING;
+    } catch (_) {
+      return false;
+    }
+  };
+  const ytDuration = () => Number(player.getDuration?.() || 0);
+  const ytCurrent = () => Number(player.getCurrentTime?.() || 0);
+
+  const syncTimeline = () => {
+    const duration = ytDuration();
+    const current = ytCurrent();
+    const pct = duration > 0 ? Math.max(0, Math.min(1, current / duration)) : 0;
+    if (timelineProgress) timelineProgress.style.width = `${pct * 100}%`;
+    if (timelineThumb) timelineThumb.style.left = `${pct * 100}%`;
+    if (timelineBuffered) timelineBuffered.style.width = "0%";
+    if (timeEl) timeEl.textContent = `${formatMediaTime(current)} / ${formatMediaTime(duration)}`;
+    setMediaPreviewButtonIcon(playPauseBtn, ytPlaying() ? pauseIcon : playIcon);
+  };
+  const syncVolume = () => {
+    let level = 0;
+    let muted = false;
+    try {
+      muted = !!player.isMuted?.();
+      level = muted ? 0 : Math.max(0, Math.min(1, Number(player.getVolume?.() || 0) / 100));
+    } catch (_) {}
+    if (volProgress) volProgress.style.width = `${level * 100}%`;
+    if (volThumb) volThumb.style.left = `${level * 100}%`;
+    updateMediaPreviewVolumeIcon(muteBtn, level, muted);
+  };
+  let pendingSeekPct = null;
+  const applySeekPct = (pct) => {
+    const duration = ytDuration();
+    if (!duration || duration === 0 || Number.isNaN(duration)) {
+      console.warn(`[seek] yt blocked | reason=duration_not_ready | duration=${duration}`);
+      pendingSeekPct = pct;
+      return;
+    }
+    pendingSeekPct = null;
+    try {
+      const targetTime = pct * duration;
+      console.log(`[seek] yt | pct=${pct.toFixed(3)} | target=${targetTime.toFixed(2)}s`);
+      player.seekTo(targetTime, true);
+    } catch (_) {}
+  };
+  const seekFromClientX = (clientX) => {
+    const seekRoot = timelineTrack || timelineWrap;
+    if (!seekRoot) return;
+    const rect = seekRoot.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    applySeekPct(pct);
+    syncTimeline();
+  };
+  const volumeFromClientX = (clientX) => {
+    if (!volWrap) return;
+    const rect = volWrap.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    try {
+      player.setVolume(Math.round(pct * 100));
+      if (pct <= 0.0001) player.mute?.();
+      else player.unMute?.();
+    } catch (_) {}
+    persistPlayerVolume(pct);
+    syncVolume();
+  };
+
+  let isScrubbing = false;
+  let scrubPointerId = null;
+  let isVolumeDragging = false;
+  const onTimelinePointerDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    isScrubbing = true;
+    scrubPointerId = e.pointerId;
+    timelineWrap?.setPointerCapture?.(e.pointerId);
+    seekFromClientX(e.clientX);
+  };
+  const onTimelinePointerMove = (e) => {
+    if (!isScrubbing) return;
+    if (scrubPointerId != null && e.pointerId !== scrubPointerId) return;
+    seekFromClientX(e.clientX);
+  };
+  const onTimelinePointerUpOrCancel = (e) => {
+    if (scrubPointerId != null && e.pointerId !== scrubPointerId) return;
+    isScrubbing = false;
+    if (scrubPointerId != null) {
+      timelineWrap?.releasePointerCapture?.(scrubPointerId);
+    }
+    scrubPointerId = null;
+  };
+  const onVolumeMouseDown = (e) => {
+    isVolumeDragging = true;
+    volumeFromClientX(e.clientX);
+  };
+  timelineWrap?.addEventListener("pointerdown", onTimelinePointerDown);
+  timelineWrap?.addEventListener("pointermove", onTimelinePointerMove);
+  timelineWrap?.addEventListener("pointerup", onTimelinePointerUpOrCancel);
+  timelineWrap?.addEventListener("pointercancel", onTimelinePointerUpOrCancel);
+  volWrap?.addEventListener("mousedown", onVolumeMouseDown);
+  const onMouseMove = (e) => {
+    if (isVolumeDragging) volumeFromClientX(e.clientX);
+  };
+  const onMouseUp = () => {
+    isScrubbing = false;
+    scrubPointerId = null;
+    isVolumeDragging = false;
+  };
+  document.addEventListener("mousemove", onMouseMove);
+  document.addEventListener("mouseup", onMouseUp);
+
+  const onPlayPauseClick = () => {
+    try {
+      if (ytPlaying()) player.pauseVideo?.();
+      else player.playVideo?.();
+    } catch (_) {}
+    syncTimeline();
+  };
+  const onMuteClick = () => {
+    try {
+      if (player.isMuted?.()) player.unMute?.();
+      else player.mute?.();
+      const level = player.isMuted?.() ? 0 : Math.max(0, Math.min(1, Number(player.getVolume?.() || 0) / 100));
+      persistPlayerVolume(level);
+    } catch (_) {}
+    syncVolume();
+  };
+  const onVolumeClick = (e) => volumeFromClientX(e.clientX);
+
+  playPauseBtn?.addEventListener("click", onPlayPauseClick);
+  muteBtn?.addEventListener("click", onMuteClick);
+  volWrap?.addEventListener("click", onVolumeClick);
+
+  if (mediaPreviewYoutubeTicker) clearInterval(mediaPreviewYoutubeTicker);
+  setTimelineReady(false);
+  mediaPreviewYoutubeTicker = setInterval(() => {
+    if (ytDuration() > 0) {
+      setTimelineReady(true);
+      if (pendingSeekPct != null) {
+        applySeekPct(pendingSeekPct);
+      }
+    } else {
+      setTimelineReady(false);
+    }
+    syncTimeline();
+    syncVolume();
+  }, 250);
+  syncTimeline();
+  syncVolume();
+
+  mediaPreviewVideoCleanup = () => {
+    document.removeEventListener("mousemove", onMouseMove);
+    document.removeEventListener("mouseup", onMouseUp);
+    timelineWrap?.removeEventListener("pointerdown", onTimelinePointerDown);
+    timelineWrap?.removeEventListener("pointermove", onTimelinePointerMove);
+    timelineWrap?.removeEventListener("pointerup", onTimelinePointerUpOrCancel);
+    timelineWrap?.removeEventListener("pointercancel", onTimelinePointerUpOrCancel);
+    volWrap?.removeEventListener("mousedown", onVolumeMouseDown);
+    playPauseBtn?.removeEventListener("click", onPlayPauseClick);
+    muteBtn?.removeEventListener("click", onMuteClick);
+    volWrap?.removeEventListener("click", onVolumeClick);
+    if (mediaPreviewYoutubeTicker) {
+      clearInterval(mediaPreviewYoutubeTicker);
+      mediaPreviewYoutubeTicker = null;
+    }
+    if (mediaPreviewYoutubePlayer?.destroy) {
+      try {
+        mediaPreviewYoutubePlayer.destroy();
+      } catch (_) {}
+    }
+    mediaPreviewYoutubePlayer = null;
+  };
 }
 
 async function showReelFeed(items, currentIndex) {
@@ -6392,8 +8110,10 @@ async function showReelFeed(items, currentIndex) {
   const overlay = $("#mediaPreview");
   const mediaEl = $("#mediaPreviewArea");
   const reelFeedEl = $("#mediaPreviewReelFeed");
-  const videoToolsEl = $("#mediaPreviewVideoTools");
-  if (videoToolsEl) videoToolsEl.classList.add("hidden");
+  const videoOverlayEl = $("#mediaPreviewVideoOverlay");
+  if (videoOverlayEl) videoOverlayEl.classList.add("hidden");
+  clearMediaPreviewExternalPlayer();
+  setMediaPreviewBackgroundBlur(true);
 
   mediaEl.classList.add("hidden");
   reelFeedEl.classList.remove("hidden");
@@ -6412,9 +8132,8 @@ async function showReelFeed(items, currentIndex) {
   }
 
   updateReelHeader(mediaPreviewItem);
-  const hintEl = $("#mediaPreviewHint");
-  if (hintEl) hintEl.textContent = "Scroll to browse · Esc to close";
 
+  overlay.classList.remove("media-preview--closing");
   overlay.classList.remove("hidden");
 
   requestAnimationFrame(() => {
@@ -6443,6 +8162,7 @@ async function showReelFeed(items, currentIndex) {
         mediaPreviewItem = item;
         updateReelHeader(item);
         pauseAllReelMediaExcept(reelFeedEl, idx);
+        updateMediaPreviewCounter();
       }
     };
     reelFeedEl.addEventListener("scroll", reelFeedScrollHandler, { passive: true });
@@ -6485,27 +8205,28 @@ async function showMediaPreview(it) {
   const reelFeedEl = $("#mediaPreviewReelFeed");
   const titleEl = $("#mediaPreviewTitle");
   const badgeEl = $("#mediaPreviewBadge");
-  const tagsEl = $("#mediaPreviewTags");
-  const videoToolsEl = $("#mediaPreviewVideoTools");
+  const typeEl = $("#mediaPreviewType");
+  const sizeEl = $("#mediaPreviewSize");
+  const videoOverlayEl = $("#mediaPreviewVideoOverlay");
+  clearMediaPreviewExternalPlayer();
+  setMediaPreviewBackgroundBlur(true);
 
   if (reelFeedEl) reelFeedEl.classList.add("hidden");
-  if (videoToolsEl) videoToolsEl.classList.add("hidden");
+  if (videoOverlayEl) videoOverlayEl.classList.add("hidden");
   overlay.querySelector(".media-preview__content")?.classList.remove("media-preview__content--reel");
   if (mediaEl) mediaEl.classList.remove("hidden");
   if (mediaEl) mediaEl.classList.remove("media-preview__hero--reel");
 
   if (titleEl) titleEl.textContent = truncateForDialog(it.title || it.original_filename || "Untitled", 55);
 
-  const srcType = sourceType(it);
-  const platformLabel = SOURCE_LABELS[srcType]?.text ?? "Link";
   if (badgeEl) {
-    badgeEl.textContent = srcType === "local" ? "Local" : platformLabel;
-    badgeEl.className = "media-preview__badge media-preview__badge--" + srcType;
+    badgeEl.textContent = t("preview.localBadge", (state.settings?.language || "en"));
+    badgeEl.className = "media-preview__badge media-preview__badge--local";
   }
-  if (tagsEl) {
-    const tagLabels = (it.tags || []).map((t) => t.label || t).filter(Boolean).slice(0, 3);
-    tagsEl.innerHTML = tagLabels.map((l) => `<span class="media-preview__tag">${escapeHtml(l)}</span>`).join("");
-    tagsEl.classList.toggle("hidden", tagLabels.length === 0);
+  if (typeEl) typeEl.textContent = mediaPreviewTypeLabel(it);
+  if (sizeEl) {
+    const sizeBytes = it?.size_bytes ?? it?.file_size ?? it?.bytes ?? null;
+    sizeEl.textContent = formatPreviewFileSize(sizeBytes);
   }
   if (titleEl) {
     titleEl.classList.toggle("media-preview__title--clickable", false);
@@ -6522,50 +8243,113 @@ async function showMediaPreview(it) {
           titleEl.classList.add("media-preview__title--clickable");
           titleEl.dataset.hasCollections = "1";
         }
-        const h = $("#mediaPreviewHint");
-        if (h) h.textContent = [...hintParts, "Click title to open collection"].join(" · ");
       }
     }).catch((err) => {
       uilog("mediaPreview", "getCollectionsForInspiration failed", err?.message || String(err));
     });
   }
 
-  const hintEl = $("#mediaPreviewHint");
-  const hintParts = ["Esc to close"];
+  setMediaPreviewDimensions(NaN, NaN);
 
   mediaEl.innerHTML = "";
   mediaEl.draggable = false;
   mediaEl.dataset.dragPath = "";
+
+  const mountYouTubePreview = (ytId) => {
+    const ytHost = document.createElement("div");
+    ytHost.className = "media-preview__yt-host";
+    ytHost.title = "YouTube";
+    const currentId = mediaPreviewItem?.id || null;
+    mediaEl.appendChild(ytHost);
+    if (videoOverlayEl) videoOverlayEl.classList.remove("hidden");
+    initMediaPreviewYouTubePlayer(ytHost, ytId)
+      .then((player) => {
+        if ((mediaPreviewItem?.id || null) !== currentId) {
+          try { player.destroy?.(); } catch (_) {}
+          return;
+        }
+        wireYouTubeInspector(player);
+      })
+      .catch((err) => {
+        if ((mediaPreviewItem?.id || null) !== currentId) return;
+        console.warn("[player] youtube init failed:", err);
+        ytHost.innerHTML = "";
+        const iframe = document.createElement("iframe");
+        iframe.src = youtubeViewerEmbedUrl(ytId);
+        iframe.title = "YouTube";
+        iframe.setAttribute("allow", "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture");
+        ytHost.appendChild(iframe);
+      });
+  };
 
   if (it.type === "image" || it.type === "gif") {
     const img = document.createElement("img");
     wireVaultImageFallback(img, it, false);
     img.alt = it.title || "";
     img.draggable = false;
+    img.addEventListener("load", () => {
+      setMediaPreviewDimensions(img.naturalWidth, img.naturalHeight);
+    });
     mediaEl.appendChild(img);
   } else if (it.type === "video") {
-    const video = document.createElement("video");
-    video.src = loadableUrl(it.stored_path_url, it.stored_path);
-    video.controls = false;
-    video.autoplay = false;
-    video.draggable = false;
-    video.playsInline = true;
-    if (showsInShortFormRow(it)) {
-      mediaEl.classList.add("media-preview__hero--reel");
+    const localSrc = loadableUrl(it.stored_path_url, it.stored_path);
+    const sourceUrl = String(it.source_url || "").trim();
+    const ytId = sourceUrl ? youtubeVideoId(sourceUrl) : null;
+    if (localSrc) {
+      const video = document.createElement("video");
+      video.src = localSrc;
+      video.controls = false;
+      video.autoplay = true;
+      video.draggable = false;
+      video.playsInline = true;
+      video.preload = "metadata";
+      if (showsInShortFormRow(it)) {
+        mediaEl.classList.add("media-preview__hero--reel");
+      }
+      mediaEl.appendChild(video);
+      if (videoOverlayEl) videoOverlayEl.classList.remove("hidden");
+    } else if (ytId) {
+      mountYouTubePreview(ytId);
+    } else if (sourceUrl && isHttpVideoSourceCandidate(sourceUrl)) {
+      console.log("[player] source=url | url=" + sourceUrl);
+      const video = document.createElement("video");
+      video.src = sourceUrl;
+      video.controls = false;
+      video.autoplay = true;
+      video.draggable = false;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.addEventListener("error", () => {
+        console.error("[player] url video failed | url=" + sourceUrl + " | code=" + (video.error?.code ?? ""));
+      }, { once: true });
+      mediaEl.appendChild(video);
+      if (videoOverlayEl) videoOverlayEl.classList.remove("hidden");
+    } else {
+      const link = document.createElement("a");
+      link.href = sourceUrl || "#";
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = sourceUrl || "Video source unavailable";
+      link.style.color = "var(--text)";
+      mediaEl.appendChild(link);
     }
-    mediaEl.appendChild(video);
-    if (videoToolsEl) videoToolsEl.classList.remove("hidden");
   } else if (it.type === "link") {
     const ytId = it.source_url ? youtubeVideoId(it.source_url) : null;
     if (ytId) {
-      const iframe = document.createElement("iframe");
-      iframe.src = youtubeEmbedUrl(ytId) + "&autoplay=1";
-      iframe.title = "YouTube";
-      iframe.setAttribute("allow", "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture");
-      if (showsInShortFormRow(it)) {
-        iframe.classList.add("media-preview__iframe--reel");
-      }
-      mediaEl.appendChild(iframe);
+      mountYouTubePreview(ytId);
+    } else if (isHttpVideoSourceCandidate(it.source_url)) {
+      const video = document.createElement("video");
+      video.src = String(it.source_url || "");
+      video.controls = false;
+      video.autoplay = true;
+      video.draggable = false;
+      video.playsInline = true;
+      video.preload = "metadata";
+      video.addEventListener("error", () => {
+        console.error("[player] url video failed | url=" + String(it.source_url || "") + " | code=" + (video.error?.code ?? ""));
+      }, { once: true });
+      mediaEl.appendChild(video);
+      if (videoOverlayEl) videoOverlayEl.classList.remove("hidden");
     } else {
       const thumb = it.thumbnail_path_url || "";
       if (thumb) {
@@ -6573,6 +8357,9 @@ async function showMediaPreview(it) {
         wireVaultImageFallback(img, it, true);
         img.alt = it.title || "";
         img.draggable = false;
+        img.addEventListener("load", () => {
+          setMediaPreviewDimensions(img.naturalWidth, img.naturalHeight);
+        });
         mediaEl.appendChild(img);
       } else {
         const link = document.createElement("a");
@@ -6594,61 +8381,98 @@ async function showMediaPreview(it) {
     mediaEl.dataset.dragAbsPath = pathAbs || "";
     mediaEl.dataset.dragIcon = (it.thumbnail_path || it.stored_path) || "";
     mediaEl.classList.add("media-preview__media--draggable");
-    hintParts.push("Drag media to copy");
   } else {
     mediaEl.classList.remove("media-preview__media--draggable");
   }
-  if (hintEl) hintEl.textContent = hintParts.join(" · ");
 
   overlay.classList.remove("hidden");
+  updateMediaPreviewCounter();
   syncMediaPreviewActionState(it);
 
   if (copyKeyHandler) {
-    document.removeEventListener("keydown", copyKeyHandler);
+    document.removeEventListener("keydown", copyKeyHandler, true);
     copyKeyHandler = null;
   }
   copyKeyHandler = async (e) => {
-    const isCopy = (e.ctrlKey || e.metaKey) && String(e.key || "").toLowerCase() === "c";
-    if (!isCopy) return;
+    const key = String(e.key || "").toLowerCase();
+    const isCopy = (e.ctrlKey || e.metaKey) && key === "c";
+    const isPlain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    const activeEl = document.activeElement;
+    const typing =
+      activeEl &&
+      (activeEl.tagName === "INPUT" ||
+        activeEl.tagName === "TEXTAREA" ||
+        activeEl.isContentEditable);
+    if (typing) return;
+    if (!isCopy && !(isPlain && (key === "arrowleft" || key === "arrowright" || key === "c"))) return;
     const selection = window.getSelection?.();
     if (selection && selection.toString().length > 0) return;
     if (!mediaPreviewItem) return;
-    e.preventDefault();
-    await handleCopyMedia(mediaPreviewItem);
+    if (isCopy || (isPlain && key === "c")) {
+      e.preventDefault();
+      e.stopPropagation();
+      await handleCopyMedia(mediaPreviewItem);
+      return;
+    }
+    if (isPlain && key === "arrowleft") {
+      e.preventDefault();
+      await navigateMediaPreview(-1);
+      return;
+    }
+    if (isPlain && key === "arrowright") {
+      e.preventDefault();
+      await navigateMediaPreview(1);
+    }
   };
-  document.addEventListener("keydown", copyKeyHandler);
+  document.addEventListener("keydown", copyKeyHandler, true);
+  mediaPreviewKeyHandler = copyKeyHandler;
 
   // Video inspector: frame hold, timeline, step, copy frame (wired after DOM ready)
   const video = mediaEl.querySelector("video");
-  if (video && videoToolsEl) {
+  if (video && videoOverlayEl) {
     wireVideoInspector(video, it);
   }
 }
 
 function hideMediaPreview() {
   uilog("mediaPreview", "hideMediaPreview");
+  const overlayEl = $("#mediaPreview");
+  if (!overlayEl || overlayEl.classList.contains("hidden")) return;
   mediaPreviewItem = null;
-  $("#mediaPreview")?.querySelector(".media-preview__content")?.classList.remove("media-preview__content--reel");
+  overlayEl.querySelector(".media-preview__content")?.classList.remove("media-preview__content--reel");
   const reelFeedEl = $("#mediaPreviewReelFeed");
   if (reelFeedEl && reelFeedScrollHandler) {
     reelFeedEl.removeEventListener("scroll", reelFeedScrollHandler);
     reelFeedScrollHandler = null;
   }
-  $("#mediaPreview").classList.add("hidden");
+  overlayEl.classList.add("media-preview--closing");
   if (copyKeyHandler) {
-    document.removeEventListener("keydown", copyKeyHandler);
+    document.removeEventListener("keydown", copyKeyHandler, true);
     copyKeyHandler = null;
   }
+  mediaPreviewKeyHandler = null;
+  if (typeof mediaPreviewVideoCleanup === "function") {
+    mediaPreviewVideoCleanup();
+    mediaPreviewVideoCleanup = null;
+  }
+  clearMediaPreviewExternalPlayer();
+  setMediaPreviewBackgroundBlur(false);
   const mediaEl = $("#mediaPreviewArea");
   if (mediaEl) mediaEl.innerHTML = "";
   if (reelFeedEl) reelFeedEl.innerHTML = "";
+  setTimeout(() => {
+    overlayEl.classList.add("hidden");
+    overlayEl.classList.remove("media-preview--closing");
+  }, 180);
 }
 
 // Alias for backward compatibility — resolve full item from state so newly added items open correctly
 function openPreview(it) {
   if (!it?.id) return;
   const full = state.inspirations.find((i) => i.id === it.id);
-  showMediaPreview(full ?? it);
+  const resolved = full ?? it;
+  recordItemEngagement(resolved, "preview");
+  showMediaPreview(resolved);
 }
 
 async function addSelectedToCollectionFlow() {
@@ -6662,16 +8486,18 @@ async function addSelectedToCollectionFlow() {
   const list = document.createElement("div");
   list.className = "list";
   for (const c of state.collections) {
+    const displayName = getCollectionDisplayName(c);
     const row = document.createElement("div");
     row.className = "list-item";
     row.innerHTML = `<div class="list-item__name"></div><div class="badge">Add</div>`;
-    row.querySelector(".list-item__name").textContent = c.name;
+    row.querySelector(".list-item__name").textContent = displayName;
     row.addEventListener("click", async () => {
       await window.qooti.addToCollection(c.id, ids);
+      recordEngagementAfterCollectionAdd(ids);
       hideModal();
       await refreshData();
       await loadInspirations(false);
-      toast(`Added to ${c.name} collection`, 2800);
+      toast(`Added to ${displayName} collection`, 2800);
     });
     list.appendChild(row);
   }
@@ -8206,12 +10032,13 @@ function wireEvents() {
       }
       emptyEl.classList.add("hidden");
       for (const c of list) {
+        const displayName = getCollectionDisplayName(c);
         const count = c.item_count != null ? c.item_count : (c.itemCount != null ? c.itemCount : 0);
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "dropdown__item";
         btn.setAttribute("role", "menuitem");
-        btn.innerHTML = `<span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:${folderIconUrl}" aria-hidden="true"></span><span class="collections-panel__item-name">${escapeHtml(c.name || "Unnamed")}</span><span class="collections-panel__item-count">${count}</span>`;
+        btn.innerHTML = `<span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:${folderIconUrl}" aria-hidden="true"></span><span class="collections-panel__item-name">${escapeHtml(displayName || "Unnamed")}</span><span class="collections-panel__item-count">${count}</span>`;
         btn.dataset.collectionId = c.id;
         btn.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -8221,7 +10048,7 @@ function wireEvents() {
           openedByClick = false;
           state.view = "collection:" + id;
           state.currentCollectionId = id;
-          state.currentCollectionName = (state.collections || []).find((x) => x.id === id)?.name || "";
+          state.currentCollectionName = getCollectionDisplayName((state.collections || []).find((x) => x.id === id)) || "";
           hideCollectionsView();
           showGrid();
           updateCollectionViewBar();
@@ -8387,7 +10214,7 @@ function wireEvents() {
     state.selectedTagId = "";
     state.sortByRecent = false;
     updateTagFilterBarActiveState();
-    loadInspirations(true);
+    loadInspirations(false);
   });
   $("#tagFilterRecent")?.addEventListener("click", () => {
     state.sortByRecent = true;
@@ -8403,7 +10230,14 @@ function wireEvents() {
       const tagId = pill.dataset.tagId ?? "";
       state.selectedTagId = tagId;
       updateTagFilterBarActiveState();
-      loadInspirations(!state.sortByRecent);
+      loadInspirations(false);
+    });
+    tagFilterBar.addEventListener("contextmenu", (e) => {
+      const pill = e.target.closest("#tagFilterPills .tag-filter-pill[data-tag-id]");
+      if (!pill) return;
+      const tagId = pill.dataset.tagId?.trim();
+      if (!tagId) return;
+      showTagFilterPillContextMenu(e, tagId);
     });
   }
 
@@ -8737,7 +10571,19 @@ function wireEvents() {
     e.stopPropagation();
     hideMediaPreview();
   });
-
+  $("#mediaPreviewPrevSide")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await navigateMediaPreview(-1);
+  });
+  $("#mediaPreviewNextSide")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    await navigateMediaPreview(1);
+  });
+  $("#mediaPreviewCopy")?.addEventListener("click", async (e) => {
+    e.stopPropagation();
+    if (!mediaPreviewItem) return;
+    await handleCopyMedia(mediaPreviewItem);
+  });
   // Media preview: click title or context to open collection
   function openFirstCollectionFromPreview() {
     if (mediaPreviewCollections.length === 0) return;
@@ -8775,30 +10621,6 @@ function wireEvents() {
       }
     });
   }
-  // Quick actions on media hover (Copy, Download, Open source)
-  const quickActions = $("#mediaPreviewQuickActions");
-  const canvasWrap = document.querySelector(".media-preview__canvas-wrap");
-  if (quickActions && canvasWrap) {
-    quickActions.querySelectorAll("[data-action]").forEach((btn) => {
-      btn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        const action = btn.dataset.action;
-        const it = mediaPreviewItem;
-        if (!it) return;
-        if (action === "copy") {
-          await handleCopyMedia(it);
-        } else if (action === "open-source" && it.source_url) {
-          window.open(it.source_url, "_blank", "noopener");
-        } else if (action === "download" && it.source_url && (it.type === "link" || it.type === "video")) {
-          hideMediaPreview();
-          showAddSurface();
-          $("#addInput").value = it.source_url;
-          $("#addInput").focus();
-        }
-      });
-    });
-  }
-
   $("#mediaPreviewFindRelated").addEventListener("click", (e) => {
     e.stopPropagation();
     uilog("findRelated", "clicked");
@@ -8819,6 +10641,7 @@ function wireEvents() {
     if (state.view?.startsWith("collection:") && state.currentCollectionId) {
       try {
         await window.qooti.addToCollection(state.currentCollectionId, [item.id]);
+        recordEngagementAfterCollectionAdd(item);
         await refreshData();
         await loadInspirations(false);
         toast(`Added to ${state.currentCollectionName || "collection"}`, { durationMs: 2800, variant: "success" });
@@ -8835,20 +10658,22 @@ function wireEvents() {
     const list = document.createElement("div");
     list.className = "list";
     for (const c of state.collections) {
+      const displayName = getCollectionDisplayName(c);
       const row = document.createElement("div");
       row.className = "list-item";
       row.innerHTML = `<div class="list-item__name"></div><div class="badge">Add</div>`;
-      row.querySelector(".list-item__name").textContent = c.name;
+      row.querySelector(".list-item__name").textContent = displayName;
       row.addEventListener("click", async () => {
-        uilog("addToCollection", "clicked", c.name);
+        uilog("addToCollection", "clicked", displayName);
         try {
           uilog("addToCollection", "invoking");
           await window.qooti.addToCollection(c.id, [item.id]);
+          recordEngagementAfterCollectionAdd(item);
           uilog("addToCollection", "invoke resolved");
           hideModal();
           await refreshData();
           loadInspirations(false);
-          toast(`Added to ${c.name}`, { durationMs: 2800, variant: "success" });
+          toast(`Added to ${displayName}`, { durationMs: 2800, variant: "success" });
           uilog("addToCollection", "done");
         } catch (err) {
           uilog("addToCollection", "error", err?.message || String(err));
@@ -8892,8 +10717,11 @@ function wireEvents() {
 
   function setFileDragData(e, absPath, relPath) {
     if (absPath) {
+      const fileUri = toFileUri(absPath);
       e.dataTransfer.setData("text/plain", absPath);
-      e.dataTransfer.setData("text/uri-list", "file:///" + absPath.replace(/\\/g, "/").replace(/^\/+/, ""));
+      if (fileUri) e.dataTransfer.setData("text/uri-list", fileUri);
+      const downloadUrl = dragDownloadUrl(absPath, relPath);
+      if (downloadUrl) e.dataTransfer.setData("DownloadURL", downloadUrl);
     }
   }
 
@@ -9002,7 +10830,7 @@ function wireEvents() {
   });
   addZone.addEventListener("drop", handleAddSurfaceDrop);
 
-  // Menu items — Shuffle: randomize visible dataset. With tag filter: shuffle filtered set. With Recent: switch to All then shuffle.
+  // Menu "Shuffle order": randomize the visible list. Does not run on add/delete/refresh.
   $("#menuNavAll").addEventListener("click", () => {
     hideAllDropdowns();
     state.selected.clear();
@@ -9149,6 +10977,15 @@ function wireEvents() {
   $("#searchInput").addEventListener("keydown", async (e) => {
     if (e.key !== "Enter") return;
     const value = ($("#searchInput")?.value || "").trim().toLowerCase();
+    if (value === "blt_delsurvey") {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#searchInput").value = "";
+      hideSearchDownloadBar();
+      updateSearchInputLinkState();
+      await handleDeleteSurveySearchCommand();
+      return;
+    }
     if (value === "delall") {
       e.preventDefault();
       e.stopPropagation();
@@ -9167,6 +11004,16 @@ function wireEvents() {
       if (gridView) gridView.scrollTo({ top: 0, behavior: "smooth" });
       return;
     }
+    if (value === "blt_rang") {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#searchInput").value = "";
+      hideSearchDownloadBar();
+      updateSearchInputLinkState();
+      state.query = "";
+      await handleBltRangPaletteBackfillCommand();
+      return;
+    }
     // Normal search — apply query and reload
     state.query = value;
     loadInspirations(false);
@@ -9176,6 +11023,7 @@ function wireEvents() {
 
   // Search bar download (when video link pasted)
   wireSearchDownloadBar();
+  wireVideoDownloadIndicator();
 
   // Selection bar actions
   $("#btnAddToCollection").addEventListener("click", addSelectedToCollectionFlow);
@@ -9231,6 +11079,9 @@ function wireEvents() {
       hideContextMenu();
     }
   });
+  // Close context menu when any scrollable container scrolls.
+  document.addEventListener("scroll", hideContextMenu, { passive: true, capture: true });
+  window.addEventListener("wheel", hideContextMenu, { passive: true });
 
   // Enter key — trigger primary action when add preview is visible
   document.addEventListener("keydown", (e) => {

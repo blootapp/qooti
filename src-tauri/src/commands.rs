@@ -4,26 +4,73 @@ use crate::tags;
 use crate::vault::VaultPaths;
 use base64::Engine;
 use image::GenericImageView;
-use log::{info, warn};
+use log::{debug, error, info, warn};
 
-use rusqlite::OptionalExtension;
+use rusqlite::{Connection, OptionalExtension};
 use rusqlite::types::Value as SqlValue;
 
-/// Logs command lifecycle for debugging "actions stop after first use" bug.
-/// Call at start of each command; logs when command finishes (incl. on panic/error).
+/// Per-command timing: start at `debug!`, finish at `info!`, `warn!` if slow (>500ms).
 macro_rules! cmd_log {
     ($name:expr) => {
         let _cmd_log_guard = {
             struct CmdLogGuard(&'static str, std::time::Instant);
             impl Drop for CmdLogGuard {
                 fn drop(&mut self) {
-                    info!("[CMD] {} finished ({}ms)", self.0, self.1.elapsed().as_millis());
+                    let ms = self.1.elapsed().as_millis() as u64;
+                    if ms > 500 {
+                        warn!(
+                            "[CMD] {} | duration={}ms | status=slow",
+                            self.0, ms
+                        );
+                    }
+                    info!(
+                        "[CMD] {} | duration={}ms | status=finished",
+                        self.0, ms
+                    );
                 }
             }
-            info!("[CMD] {} called", $name);
+            debug!("[CMD] {} | status=started", $name);
             CmdLogGuard($name, std::time::Instant::now())
         };
     };
+}
+
+/// For hot polling paths (e.g. extension queue): only `debug!` + slow warning.
+macro_rules! cmd_log_debug {
+    ($name:expr) => {
+        let _cmd_log_guard = {
+            struct CmdLogGuard(&'static str, std::time::Instant);
+            impl Drop for CmdLogGuard {
+                fn drop(&mut self) {
+                    let ms = self.1.elapsed().as_millis() as u64;
+                    if ms > 500 {
+                        warn!(
+                            "[CMD] {} | duration={}ms | status=slow",
+                            self.0, ms
+                        );
+                    }
+                    debug!(
+                        "[CMD] {} | duration={}ms | status=finished",
+                        self.0, ms
+                    );
+                }
+            }
+            debug!("[CMD] {} | status=started", $name);
+            CmdLogGuard($name, std::time::Instant::now())
+        };
+    };
+}
+
+pub fn log_startup_session() {
+    let session_id = &Uuid::new_v4().to_string()[..8];
+    info!(
+        "[startup] session={} | version={} | os={} | arch={} | debug={}",
+        session_id,
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS,
+        std::env::consts::ARCH,
+        cfg!(debug_assertions)
+    );
 }
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -32,11 +79,11 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, State};
 use tauri::{Emitter, Manager};
@@ -90,6 +137,14 @@ pub struct NotificationRow {
 }
 
 #[derive(Serialize, Deserialize)]
+pub struct OcrDebugPaletteSwatch {
+    pub hex: String,
+    pub lab_l: f32,
+    pub lab_a: f32,
+    pub lab_b: f32,
+}
+
+#[derive(Serialize, Deserialize)]
 pub struct OcrDebugInfo {
     pub id: String,
     pub media_type: String,
@@ -102,6 +157,8 @@ pub struct OcrDebugInfo {
     pub ocr_text: String,
     pub analysis_path: Option<String>,
     pub tesseract_binary: Option<String>,
+    /// Dominant colors (LAB in DB → hex + components for debug UI).
+    pub palette: Vec<OcrDebugPaletteSwatch>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -295,9 +352,28 @@ pub async fn list_inspirations(
     let db = db.inner().clone();
     let vault = vault.inner().clone();
     let params = params.unwrap_or(serde_json::json!({}));
+    let dbg_query_len = params["query"].as_str().map(|s| s.len()).unwrap_or(0);
+    let dbg_has_collection = params["collectionId"].as_str().is_some();
+    let dbg_has_tag = params["tagId"]
+        .as_str()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+    let dbg_has_color = params.get("colorFilter").is_some();
+    let dbg_missing_palette = params
+        .get("missingPaletteOnly")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    debug!(
+        "[CMD] list_inspirations | query_len={} | collection_filter={} | tag_filter={} | color_filter={} | missing_palette={}",
+        dbg_query_len, dbg_has_collection, dbg_has_tag, dbg_has_color, dbg_missing_palette
+    );
 
     tauri::async_runtime::spawn_blocking(move || {
         let query = params["query"].as_str().unwrap_or("").trim();
+        let missing_palette_only = params
+            .get("missingPaletteOnly")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let collection_id = params["collectionId"].as_str();
         let tag_id_filter = params["tagId"].as_str().map(|s| s.trim()).filter(|s| !s.is_empty());
         let color_filter = params.get("colorFilter").and_then(|c| {
@@ -331,7 +407,10 @@ pub async fn list_inspirations(
 
         // Only hide content from hidden collections on the unfiltered main feed
         // (no tag, no color, no search). Any active filter should search everything.
-        let has_active_filter = tag_id_filter.is_some() || color_filter.is_some() || !query.is_empty();
+        let has_active_filter = tag_id_filter.is_some()
+            || color_filter.is_some()
+            || !query.is_empty()
+            || missing_palette_only;
         let hide_hidden_collections = collection_id.is_none() && !has_active_filter;
 
         let ordered_ids: Option<Vec<String>> = if let Some([r, g, b]) = color_filter {
@@ -416,6 +495,9 @@ pub async fn list_inspirations(
         if let Some(tid) = tag_id_filter {
             sql += " AND i.id IN (SELECT inspiration_id FROM inspiration_tags WHERE tag_id = ?)";
             sql_params.push(SqlValue::from(tid.to_string()));
+        }
+        if missing_palette_only {
+            sql += " AND i.type IN ('image', 'link') AND (i.palette IS NULL OR TRIM(COALESCE(i.palette, '')) = '' OR TRIM(COALESCE(i.palette, '')) = '[]')";
         }
         if let Some(ref ids) = ordered_ids {
             if ids.is_empty() {
@@ -611,6 +693,8 @@ pub async fn list_inspirations(
             result = result[start..end].to_vec();
         }
 
+        let n = result.len();
+        debug!("[CMD] list_inspirations | count={}", n);
         Ok(result)
     })
     .await
@@ -778,27 +862,74 @@ pub fn copy_file_to_clipboard(
     rel_path: String,
 ) -> Result<(), String> {
     cmd_log!("copy_file_to_clipboard");
+    let clip_start = std::time::Instant::now();
     let abs = resolve_vault_relative_existing_path(&vault.root, &rel_path)?;
     if !abs.is_file() {
+        error!("[copy] failed | stage=resolve | error=not_a_file");
         return Err("Only local media files can be copied.".to_string());
     }
     let abs_text = normalize_windows_verbatim_prefix(&abs.to_string_lossy());
-    let rel_text = rel_to_vault(&vault.root, &abs);
+    let rel_text = vault_relative_path_for_lookup(&vault.root, &abs);
+    let vault_file_name = abs
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
 
-    let original_filename: Option<String> = {
+    let (inspiration_id, original_filename, mime_for_clip): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = {
         let conn = db.conn();
-        conn.query_row(
-            "SELECT original_filename
-             FROM inspirations
-             WHERE stored_path = ?1 OR thumbnail_path = ?1
-                OR stored_path = ?2 OR thumbnail_path = ?2
-             LIMIT 1",
-            rusqlite::params![&rel_text, &abs_text],
-            |r| r.get::<_, Option<String>>(0),
-        )
-        .optional()
-        .map_err(|e| e.to_string())?
-        .flatten()
+        let try_paths = || {
+            conn.query_row(
+                "SELECT id, original_filename, mime_type
+                 FROM inspirations
+                 WHERE stored_path = ?1 OR thumbnail_path = ?1
+                    OR stored_path = ?2 OR thumbnail_path = ?2
+                 LIMIT 1",
+                rusqlite::params![&rel_text, &abs_text],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, Option<String>>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| e.to_string())
+        };
+        let row = try_paths()?;
+        match row {
+            Some((id, on, mt)) => (Some(id), on, mt),
+            None => {
+                if let Some(ref vid) = vault_file_name {
+                    if let Some((id, on, mt)) = conn
+                        .query_row(
+                            "SELECT id, original_filename, mime_type
+                             FROM inspirations WHERE vault_id = ?1 LIMIT 1",
+                            [vid.as_str()],
+                            |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, Option<String>>(1)?,
+                                    r.get::<_, Option<String>>(2)?,
+                                ))
+                            },
+                        )
+                        .optional()
+                        .map_err(|e| e.to_string())?
+                    {
+                        (Some(id), on, mt)
+                    } else {
+                        (None, None, None)
+                    }
+                } else {
+                    (None, None, None)
+                }
+            }
+        }
     };
 
     let sanitized_name = original_filename
@@ -814,6 +945,9 @@ pub fn copy_file_to_clipboard(
                 .collect::<String>()
         })
         .filter(|s| !s.is_empty())
+        .or_else(|| {
+            extension_for_mime_clipboard(mime_for_clip.as_deref()).map(|ext| format!("qooti_clipboard.{ext}"))
+        })
         .unwrap_or_else(|| {
             abs.file_name()
                 .and_then(|n| n.to_str())
@@ -822,11 +956,32 @@ pub fn copy_file_to_clipboard(
         });
     let temp_dir = std::env::temp_dir().join("qooti_copy");
     fs::create_dir_all(&temp_dir).map_err(|e| format!("Failed to prepare temp copy folder: {}", e))?;
-    let temp_path = temp_dir.join(sanitized_name);
+    let temp_path = temp_dir.join(&sanitized_name);
     fs::copy(&abs, &temp_path).map_err(|e| format!("Failed to prepare clipboard file: {}", e))?;
+    if !temp_path.exists() {
+        error!(
+            "[copy] failed | item_id={} | stage=temp | error=missing_temp",
+            inspiration_id.as_deref().unwrap_or("-")
+        );
+        return Err("Temp file was not created".to_string());
+    }
+    let temp_size = fs::metadata(&temp_path).map(|m| m.len()).unwrap_or(0);
+    debug!(
+        "[copy] temp_file | name={:?} | size_bytes={}",
+        temp_path.file_name(),
+        temp_size
+    );
+    info!(
+        "[copy] starting | item_id={} | vault_rel={} | clip_name={} | size_bytes={}",
+        inspiration_id.as_deref().unwrap_or("-"),
+        rel_text,
+        sanitized_name,
+        temp_size
+    );
 
     #[cfg(target_os = "windows")]
     {
+        debug!("[copy] clipboard | os=windows | stage=powershell");
         let clipboard_path = normalize_windows_clipboard_path(&temp_path);
         let escaped = clipboard_path.replace('\'', "''");
         let script = format!(
@@ -849,17 +1004,27 @@ pub fn copy_file_to_clipboard(
             .map_err(|e| format!("Could not access clipboard: {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            error!(
+                "[copy] failed | item_id={} | stage=clipboard | os=windows | error={}",
+                inspiration_id.as_deref().unwrap_or("-"),
+                stderr
+            );
             return Err(if stderr.is_empty() {
                 "Could not copy file to clipboard.".to_string()
             } else {
                 stderr
             });
         }
+        info!(
+            "[copy] clipboard | os=windows | status=ok | duration={}ms",
+            clip_start.elapsed().as_millis()
+        );
         return Ok(());
     }
 
     #[cfg(target_os = "macos")]
     {
+        debug!("[copy] clipboard | os=macos | stage=osascript");
         let clipboard_path = temp_path
             .canonicalize()
             .unwrap_or(temp_path)
@@ -872,12 +1037,21 @@ pub fn copy_file_to_clipboard(
             .map_err(|e| format!("Could not access clipboard: {}", e))?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            error!(
+                "[copy] failed | item_id={} | stage=clipboard | os=macos | error={}",
+                inspiration_id.as_deref().unwrap_or("-"),
+                stderr
+            );
             return Err(if stderr.is_empty() {
                 "Could not copy file to clipboard.".to_string()
             } else {
                 stderr
             });
         }
+        info!(
+            "[copy] clipboard | os=macos | status=ok | duration={}ms",
+            clip_start.elapsed().as_millis()
+        );
         return Ok(());
     }
 
@@ -894,54 +1068,19 @@ pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
     if value.is_empty() {
         return Err("Nothing to copy.".to_string());
     }
-    #[cfg(target_os = "windows")]
+    // Native clipboard (Tauri): avoids flaky renderer Clipboard API and shell helpers (pbcopy / PowerShell).
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
-        let mut cmd = Command::new("powershell");
-        suppress_console_window(&mut cmd);
-        let output = cmd
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                "Set-Clipboard -Value $args[0]",
-                "--",
-                value,
-            ])
-            .output()
+        let mut clipboard = arboard::Clipboard::new()
             .map_err(|e| format!("Could not access clipboard: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if stderr.is_empty() {
-                "Could not copy text to clipboard.".to_string()
-            } else {
-                stderr
-            });
-        }
+        clipboard
+            .set_text(value)
+            .map_err(|e| format!("Could not copy text to clipboard: {}", e))?;
         return Ok(());
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
-        let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-        let script = format!(r#"set the clipboard to "{}""#, escaped);
-        let output = Command::new("osascript")
-            .args(["-e", &script])
-            .output()
-            .map_err(|e| format!("Could not access clipboard: {}", e))?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            return Err(if stderr.is_empty() {
-                "Could not copy text to clipboard.".to_string()
-            } else {
-                stderr
-            });
-        }
-        return Ok(());
-    }
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    {
-        Err("Copying text to clipboard is currently supported on Windows and macOS only.".to_string())
+        Err("Copying text to clipboard is not supported on this platform.".to_string())
     }
 }
 
@@ -969,6 +1108,69 @@ fn collection_display_name(raw: &str) -> String {
     }
 }
 
+const DEFAULT_UNSORTED_COLLECTION_ID: &str = "qooti-unsorted-default";
+const DEFAULT_UNSORTED_COLLECTION_NAME: &str = "Unsorted";
+
+fn ensure_default_unsorted_collection(conn: &Connection) -> Result<(), String> {
+    let ts = now_ms();
+    conn.execute(
+        "INSERT OR IGNORE INTO collections (id, name, created_at, updated_at, visible_on_home) VALUES (?, ?, ?, ?, 1)",
+        rusqlite::params![
+            DEFAULT_UNSORTED_COLLECTION_ID,
+            DEFAULT_UNSORTED_COLLECTION_NAME,
+            ts,
+            ts
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn add_inspiration_to_unsorted(conn: &Connection, inspiration_id: &str) -> Result<(), String> {
+    if inspiration_id.trim().is_empty() {
+        return Ok(());
+    }
+    ensure_default_unsorted_collection(conn)?;
+    let ts = now_ms();
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, NULL, ?)",
+            rusqlite::params![DEFAULT_UNSORTED_COLLECTION_ID, inspiration_id, ts],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed > 0 {
+        conn.execute(
+            "UPDATE collections SET updated_at = ? WHERE id = ?",
+            rusqlite::params![ts, DEFAULT_UNSORTED_COLLECTION_ID],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+fn sync_unsorted_membership(conn: &Connection) -> Result<(), String> {
+    ensure_default_unsorted_collection(conn)?;
+    let ts = now_ms();
+    let changed = conn
+        .execute(
+            "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at)
+             SELECT ?, i.id, NULL, ?
+             FROM inspirations i
+             LEFT JOIN collection_items ci ON ci.inspiration_id = i.id
+             WHERE ci.inspiration_id IS NULL",
+            rusqlite::params![DEFAULT_UNSORTED_COLLECTION_ID, ts],
+        )
+        .map_err(|e| e.to_string())?;
+    if changed > 0 {
+        conn.execute(
+            "UPDATE collections SET updated_at = ? WHERE id = ?",
+            rusqlite::params![ts, DEFAULT_UNSORTED_COLLECTION_ID],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct CollectionRow {
     pub id: String,
@@ -988,6 +1190,8 @@ pub async fn list_collections(db: State<'_, Arc<Db>>) -> Result<Vec<CollectionRo
     let db = db.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let conn = db.conn();
+        ensure_default_unsorted_collection(&conn)?;
+        sync_unsorted_membership(&conn)?;
         let mut stmt = conn
             .prepare(
                 "SELECT c.id, c.name, c.created_at, c.updated_at, COUNT(ci.inspiration_id) AS item_count, COALESCE(c.visible_on_home, 1)
@@ -1054,6 +1258,9 @@ pub fn rename_collection(
     new_name: String,
 ) -> Result<(), String> {
     cmd_log!("rename_collection");
+    if collection_id == DEFAULT_UNSORTED_COLLECTION_ID {
+        return Err("Default collection cannot be renamed".to_string());
+    }
     let new_name = new_name.trim();
     if new_name.is_empty() {
         return Err("Collection name cannot be empty".to_string());
@@ -1079,6 +1286,9 @@ pub fn rename_collection(
 #[tauri::command]
 pub fn delete_collection(db: State<Arc<Db>>, collection_id: String) -> Result<(), String> {
     cmd_log!("delete_collection");
+    if collection_id == DEFAULT_UNSORTED_COLLECTION_ID {
+        return Err("Default collection cannot be deleted".to_string());
+    }
     let conn = db.conn();
     conn.execute(
         "DELETE FROM collection_items WHERE collection_id = ?",
@@ -1091,6 +1301,7 @@ pub fn delete_collection(db: State<Arc<Db>>, collection_id: String) -> Result<()
     if n == 0 {
         return Err("Collection not found".to_string());
     }
+    sync_unsorted_membership(&conn)?;
     Ok(())
 }
 
@@ -1157,16 +1368,26 @@ pub fn add_to_collection(
     if inspiration_ids.is_empty() {
         return Ok(());
     }
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
+    let ts = now_ms();
 
     let conn = db.conn();
+    ensure_default_unsorted_collection(&conn)?;
     for (pos, id) in inspiration_ids.iter().enumerate() {
         let _ = conn.execute(
             "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
             rusqlite::params![collection_id, id, pos as i32, ts],
+        );
+    }
+    if collection_id != DEFAULT_UNSORTED_COLLECTION_ID {
+        for id in &inspiration_ids {
+            let _ = conn.execute(
+                "DELETE FROM collection_items WHERE collection_id = ? AND inspiration_id = ?",
+                rusqlite::params![DEFAULT_UNSORTED_COLLECTION_ID, id],
+            );
+        }
+        let _ = conn.execute(
+            "UPDATE collections SET updated_at = ? WHERE id = ?",
+            rusqlite::params![ts, DEFAULT_UNSORTED_COLLECTION_ID],
         );
     }
     conn.execute(
@@ -1190,6 +1411,7 @@ pub fn remove_from_collection(
         rusqlite::params![collection_id, inspiration_id],
     )
     .map_err(|e| e.to_string())?;
+    sync_unsorted_membership(&conn)?;
     Ok(())
 }
 
@@ -1230,6 +1452,28 @@ pub async fn get_collections_for_inspiration(
     .map_err(|e| e.to_string())?
 }
 
+/// Safe default filename stem for the save dialog (manifest still uses the full display name).
+fn sanitize_pack_default_filename_stem(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            _ => c,
+        })
+        .collect();
+    let trimmed = s.trim().trim_end_matches('.').to_string();
+    if trimmed.is_empty() {
+        return "collection-pack".to_string();
+    }
+    const MAX_STEM: usize = 180;
+    if trimmed.chars().count() > MAX_STEM {
+        trimmed.chars().take(MAX_STEM).collect()
+    } else {
+        trimmed
+    }
+}
+
 #[tauri::command]
 pub async fn export_collection_as_pack(
     app: AppHandle,
@@ -1249,18 +1493,16 @@ pub async fn export_collection_as_pack(
     if normalized_name.is_empty() {
         return Err("Pack name is required".to_string());
     }
-    if normalized_name.len() > 50 {
-        return Err("Pack name must be 50 characters or fewer".to_string());
-    }
-    let name_re = Regex::new(r"^[A-Za-z0-9]+(?:[ -][A-Za-z0-9]+)*$").map_err(|e| e.to_string())?;
-    if !name_re.is_match(&normalized_name) {
-        return Err(
-            "Pack name can include only letters, numbers, single spaces, and dashes".to_string(),
-        );
+    const MAX_PACK_NAME_CHARS: usize = 256;
+    if normalized_name.chars().count() > MAX_PACK_NAME_CHARS {
+        return Err(format!(
+            "Pack name must be {} characters or fewer",
+            MAX_PACK_NAME_CHARS
+        ));
     }
 
-    let safe_name = normalized_name.replace(' ', "-");
-    let default_name = format!("{}.qooti", safe_name.to_lowercase());
+    let default_stem = sanitize_pack_default_filename_stem(&normalized_name);
+    let default_name = format!("{}.qooti", default_stem);
 
     let path = app
         .dialog()
@@ -1275,18 +1517,39 @@ pub async fn export_collection_as_pack(
         None => return Err("Export cancelled".to_string()),
     };
 
-    let conn = db.conn();
     let app_version = app.package_info().version.to_string();
-    let (saved_path, bundled, skipped) = crate::pack::export_collection(
-        &conn,
-        &vault.root,
-        &collection_id,
-        &out_path,
-        Some(&app_version),
-        &normalized_name,
-        profile_image_data_url.as_deref(),
-    )
+    let db = db.inner().clone();
+    let vault_root = vault.root.clone();
+    let app_emit = app.clone();
+    let collection_id_owned = collection_id.clone();
+    let normalized_owned = normalized_name.clone();
+    let profile_owned = profile_image_data_url.clone();
+
+    let export_result = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db.conn();
+        crate::pack::export_collection(
+            &*conn,
+            &vault_root,
+            &collection_id_owned,
+            &out_path,
+            Some(app_version.as_str()),
+            &normalized_owned,
+            profile_owned.as_deref(),
+            Some(move |msg: &str, pct: u8| {
+                let _ = app_emit.emit(
+                    "collection-pack-export-progress",
+                    serde_json::json!({
+                        "percent": pct,
+                        "message": msg,
+                    }),
+                );
+            }),
+        )
+    })
+    .await
     .map_err(|e| e.to_string())?;
+
+    let (saved_path, bundled, skipped) = export_result.map_err(|e| e.to_string())?;
 
     Ok(serde_json::json!({
         "savedPath": saved_path,
@@ -2684,7 +2947,7 @@ pub fn regenerate_extension_key(db: State<Arc<Db>>) -> Result<String, String> {
 pub fn get_extension_pending(
     queue: State<'_, crate::extension_server::ExtensionQueue>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    cmd_log!("get_extension_pending");
+    cmd_log_debug!("get_extension_pending");
     let mut q = queue.0.lock().map_err(|e| e.to_string())?;
     let items: Vec<_> = q.drain(..).collect();
     Ok(items)
@@ -3184,22 +3447,48 @@ pub fn validate_license(
     })
 }
 
+fn license_endpoint_for_log(base: &str) -> String {
+    base.split('?')
+        .next()
+        .unwrap_or(base)
+        .chars()
+        .take(80)
+        .collect()
+}
+
 fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheResult, String> {
-    info!("[license] check_current_license_with_server: start");
+    let t0 = std::time::Instant::now();
     let row = {
         let conn = db.conn();
         read_license_cache_row(&conn)?
     };
     let Some(row) = row else {
-        info!("[license] no cache row, returning missing");
+        info!(
+            "[license] result | valid=false | reason=no_cache | duration={}ms",
+            t0.elapsed().as_millis()
+        );
         return Ok(build_license_cache_result(None));
     };
-    info!("[license] cache ok, checking api_base");
+    let key_hint = format!(
+        "{}***",
+        row.license_key.chars().take(4).collect::<String>()
+    );
+    debug!(
+        "[license] checking | key_hint={} | cached_plan={} | duration_so_far={}ms",
+        key_hint,
+        row.plan_type,
+        t0.elapsed().as_millis()
+    );
     let api_base = std::env::var("QOOTI_LICENSE_API_URL")
         .unwrap_or_else(|_| DEFAULT_LICENSE_API_URL.to_string());
     let api_base = api_base.trim().trim_end_matches('/');
     if api_base.is_empty() {
         let valid = is_cache_currently_valid(&row);
+        info!(
+            "[license] result | valid={} | mode=no_endpoint_config | duration={}ms",
+            valid,
+            t0.elapsed().as_millis()
+        );
         return Ok(LicenseCacheResult {
             valid,
             plan_type: Some(row.plan_type),
@@ -3216,12 +3505,16 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
             last_validated_at: row.last_validated_at,
         });
     }
-    info!("[license] get_device_fingerprint");
     let device_id = get_device_fingerprint(&db)?;
     let server_check = match request_license_server_check(api_base, &row.license_key, &device_id, false) {
         Ok(result) => result,
         Err(error) => {
-            info!("[license] request failed: {}", error);
+            warn!(
+                "[license] server unreachable | url={} | error={} | duration={}ms",
+                license_endpoint_for_log(api_base),
+                error,
+                t0.elapsed().as_millis()
+            );
             let conn = db.conn();
             let _ = update_cached_license_validation_state(&conn, "network_error", Some(error.as_str()));
             let valid = is_cache_currently_valid(&row);
@@ -3255,6 +3548,18 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         expires_at,
         server_check.status.as_str(),
         server_check.error.as_deref(),
+    );
+    let days_remaining = expires_at
+        .checked_sub(now_unix_ts())
+        .map(|d| d / 86400)
+        .unwrap_or(0);
+    info!(
+        "[license] result | valid={} | plan={} | status={} | days_remaining={} | duration={}ms",
+        server_check.valid,
+        plan_type,
+        server_check.status,
+        days_remaining,
+        t0.elapsed().as_millis()
     );
     Ok(LicenseCacheResult {
         valid: server_check.valid,
@@ -3302,6 +3607,7 @@ fn setting_default(key: &str) -> Option<&'static str> {
         "gridDensity" => "comfortable",
         "showMediaTitle" => "true",
         "showSourceLabels" => "true",
+        "showCollectionIndicator" => "true",
         "showQuickTagsInToast" => "true",
         "defaultClickBehavior" => "preview",
         "enableContextMenu" => "true",
@@ -3317,6 +3623,7 @@ fn setting_default(key: &str) -> Option<&'static str> {
         "relatedTagInfluence" => "true",
         "quickTagsDefaultEnabled" => "true",
         "quickTagsCustom" => "[]",
+        "tagFilterBarPrefs" => r#"{"hidden":[],"order":null}"#,
         "d1ApiToken" => "",
         "profileName" => "",
         "profileImageDataUrl" => "",
@@ -3343,6 +3650,7 @@ pub fn get_settings(db: State<Arc<Db>>) -> Result<serde_json::Value, String> {
         "gridDensity",
         "showMediaTitle",
         "showSourceLabels",
+        "showCollectionIndicator",
         "showQuickTagsInToast",
         "defaultClickBehavior",
         "enableContextMenu",
@@ -3358,6 +3666,7 @@ pub fn get_settings(db: State<Arc<Db>>) -> Result<serde_json::Value, String> {
         "relatedTagInfluence",
         "quickTagsDefaultEnabled",
         "quickTagsCustom",
+        "tagFilterBarPrefs",
         "d1ApiToken",
         "profileName",
         "profileImageDataUrl",
@@ -4528,6 +4837,7 @@ pub fn add_link_inspiration(
         ],
     )
     .map_err(|e| e.to_string())?;
+    add_inspiration_to_unsorted(&conn, &id)?;
 
     let source = if extract_youtube_video_id(&url).is_some() {
         "youtube"
@@ -4785,6 +5095,33 @@ fn rel_to_vault(vault_root: &Path, abs: &Path) -> String {
         .unwrap_or(abs)
         .to_string_lossy()
         .replace('\\', "/")
+}
+
+/// Vault-relative path as stored in SQLite (`media/<uuid>`), using canonical roots so Windows matches.
+fn vault_relative_path_for_lookup(vault_root: &Path, abs: &Path) -> String {
+    vault_root
+        .canonicalize()
+        .ok()
+        .and_then(|root| abs.strip_prefix(&root).ok())
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|| rel_to_vault(vault_root, abs))
+}
+
+fn extension_for_mime_clipboard(mime: Option<&str>) -> Option<&'static str> {
+    match mime.unwrap_or("").to_ascii_lowercase().as_str() {
+        "video/mp4" => Some("mp4"),
+        "video/webm" => Some("webm"),
+        "video/quicktime" => Some("mov"),
+        "video/x-matroska" | "video/mkv" => Some("mkv"),
+        "video/x-msvideo" => Some("avi"),
+        "video/x-ms-wmv" => Some("wmv"),
+        "video/x-m4v" => Some("m4v"),
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        "image/gif" => Some("gif"),
+        _ => None,
+    }
 }
 
 fn detect_mime_from_filename(name: &str) -> String {
@@ -5394,92 +5731,257 @@ fn ensure_executable(path: &Path) {
 #[cfg(not(target_os = "macos"))]
 fn ensure_executable(_path: &Path) {}
 
+// ---- Video download: progress events, pause (stderr backpressure), cancel (kill) ----
+
+#[derive(Clone)]
+pub struct VideoDownloadSessionState(pub Arc<Mutex<Option<Arc<VideoDownloadSessionInner>>>>);
+
+impl Default for VideoDownloadSessionState {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(None)))
+    }
+}
+
+pub struct VideoDownloadSessionInner {
+    pub cancel: Arc<AtomicBool>,
+    pub paused: Arc<AtomicBool>,
+    pub child: Mutex<Option<std::process::Child>>,
+}
+
+fn cleanup_ytdlp_temp_by_prefix(media_dir: &Path, temp_prefix: &str) {
+    let Ok(rd) = fs::read_dir(media_dir) else {
+        return;
+    };
+    for entry in rd.flatten() {
+        let p = entry.path();
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+        if stem == temp_prefix {
+            let _ = fs::remove_file(&p);
+        }
+    }
+}
+
+fn install_video_download_session(
+    state: &VideoDownloadSessionState,
+    session: Arc<VideoDownloadSessionInner>,
+) {
+    let mut slot = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(old) = slot.take() {
+        old.cancel.store(true, Ordering::SeqCst);
+        if let Ok(mut ch) = old.child.lock() {
+            if let Some(mut c) = ch.take() {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
+    }
+    *slot = Some(session);
+}
+
+fn clear_video_download_session(state: &VideoDownloadSessionState) {
+    let mut slot = state.0.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = None;
+}
+
+fn ytdlp_emit_progress_from_line(
+    line: &str,
+    app_emit: &AppHandle,
+    re_pct: &Regex,
+    re_frag: &Regex,
+    tail: &Mutex<String>,
+) {
+    if let Ok(mut t) = tail.lock() {
+        t.push_str(line);
+        if t.len() > 12_000 {
+            let drain = t.len() - 8_000;
+            t.drain(..drain);
+        }
+    }
+    if let Some(caps) = re_pct.captures(line) {
+        if let Ok(p) = caps[1].parse::<f64>() {
+            let pct = p.clamp(0.0, 100.0).round() as i64;
+            let _ = app_emit.emit(
+                "video-download-progress",
+                serde_json::json!({ "percent": pct }),
+            );
+            return;
+        }
+    }
+    if let Some(caps) = re_frag.captures(line) {
+        if let (Ok(a), Ok(b)) = (caps[1].parse::<u64>(), caps[2].parse::<u64>()) {
+            if b > 0 {
+                let pct = ((a.saturating_mul(100)) / b).min(100) as i64;
+                let _ = app_emit.emit(
+                    "video-download-progress",
+                    serde_json::json!({ "percent": pct }),
+                );
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub fn set_video_download_paused(
+    paused: bool,
+    state: State<'_, VideoDownloadSessionState>,
+) -> Result<(), String> {
+    let slot = state
+        .0
+        .lock()
+        .map_err(|_| "video download session lock poisoned")?;
+    if let Some(s) = slot.as_ref() {
+        s.paused.store(paused, Ordering::SeqCst);
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn cancel_video_download(state: State<'_, VideoDownloadSessionState>) -> Result<(), String> {
+    let slot = state
+        .0
+        .lock()
+        .map_err(|_| "video download session lock poisoned")?;
+    if let Some(s) = slot.as_ref() {
+        s.cancel.store(true, Ordering::SeqCst);
+        if let Ok(mut ch) = s.child.lock() {
+            if let Some(ref mut c) = *ch {
+                let _ = c.kill();
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn download_video_from_url(
     app: AppHandle,
     db: State<'_, Arc<Db>>,
     vault: State<'_, Arc<VaultPaths>>,
+    download_session: State<'_, VideoDownloadSessionState>,
     url: String,
     title: Option<String>,
 ) -> Result<serde_json::Value, String> {
     cmd_log!("download_video_from_url");
     let url = normalize_required_http_url(&url)?;
-    info!("[download] starting url={}", url);
-    let id = Uuid::new_v4().to_string();
-    let temp_prefix = Uuid::new_v4().to_string();
-    let dest = vault.media_dir.join(format!("{}.mp4", temp_prefix));
+    let db = db.inner().clone();
+    let vault = vault.inner().clone();
+    let app = app.clone();
+    let download_ctrl = (*download_session).clone();
 
-    fs::create_dir_all(&vault.media_dir).map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        let run = || -> Result<serde_json::Value, String> {
+        info!("[download] starting url={}", url);
+        let id = Uuid::new_v4().to_string();
+        let temp_prefix = Uuid::new_v4().to_string();
+        let dest = vault.media_dir.join(format!("{}.mp4", temp_prefix));
 
-    let output_template = dest.with_extension("%(ext)s");
-    let output_str = output_template.to_string_lossy().replace('\\', "/");
+        fs::create_dir_all(&vault.media_dir).map_err(|e| e.to_string())?;
 
-    let ytdlp_path = resolve_ytdlp_path(Some(&app)).unwrap_or_else(|| {
-        PathBuf::from(if cfg!(target_os = "windows") {
-            "yt-dlp.exe"
-        } else {
-            "yt-dlp"
-        })
-    });
-    info!("[yt-dlp] selected binary path={}", ytdlp_path.display());
-    ensure_executable(&ytdlp_path);
+        let output_template = dest.with_extension("%(ext)s");
+        let output_str = output_template.to_string_lossy().replace('\\', "/");
 
-    let is_youtube = extract_youtube_video_id(&url).is_some();
-    let channel_name = if is_youtube {
-        fetch_youtube_channel(&ytdlp_path, &url)
-    } else {
-        None
-    };
-
-    let (quality_mode, concurrent, prefer_prog) = {
-        let conn = db.conn();
-        (
-            get_setting(&conn, "downloadQualityMode"),
-            get_setting(&conn, "downloadConcurrentFragments"),
-            get_setting(&conn, "preferProgressiveFormats"),
-        )
-    };
-
-    let format_str = match quality_mode.as_str() {
-        "fast" => "best[height<=720]/best".to_string(),
-        "balanced" => "best[height<=1080][ext=mp4]/best[ext=mp4]/best".to_string(),
-        _ => {
-            if prefer_prog == "true" {
-                "best[ext=mp4]/best".to_string()
+        let ytdlp_path = resolve_ytdlp_path(Some(&app)).unwrap_or_else(|| {
+            PathBuf::from(if cfg!(target_os = "windows") {
+                "yt-dlp.exe"
             } else {
-                "best".to_string()
+                "yt-dlp"
+            })
+        });
+        info!("[yt-dlp] selected binary path={}", ytdlp_path.display());
+        ensure_executable(&ytdlp_path);
+
+        let is_youtube = extract_youtube_video_id(&url).is_some();
+        let channel_name = if is_youtube {
+            fetch_youtube_channel(&ytdlp_path, &url)
+        } else {
+            None
+        };
+
+        let (quality_mode, concurrent, prefer_prog) = {
+            let conn = db.conn();
+            (
+                get_setting(&conn, "downloadQualityMode"),
+                get_setting(&conn, "downloadConcurrentFragments"),
+                get_setting(&conn, "preferProgressiveFormats"),
+            )
+        };
+
+        // "best" (UI: Highest) must prefer merged best video+audio (YouTube DASH), not a single
+        // progressive MP4 — the latter often caps around 720p/1080p even when 4K exists.
+        let format_str = match quality_mode.as_str() {
+            "fast" => "best[height<=720]/best".to_string(),
+            "balanced" => "best[height<=1080][ext=mp4]/best[ext=mp4]/best".to_string(),
+            "best" => {
+                if prefer_prog == "true" {
+                    "bestvideo*+bestaudio/best[ext=mp4]/best".to_string()
+                } else {
+                    "bestvideo*+bestaudio/bestvideo+bestaudio/best".to_string()
+                }
             }
-        }
-    };
+            _ => {
+                if prefer_prog == "true" {
+                    "bestvideo*+bestaudio/best[ext=mp4]/best".to_string()
+                } else {
+                    "bestvideo*+bestaudio/bestvideo+bestaudio/best".to_string()
+                }
+            }
+        };
+        info!("[download] quality_mode={} format={}", quality_mode, format_str);
 
-    let cf: u32 = concurrent.parse().unwrap_or(8);
-    let cf_str = format!("{}", cf.clamp(1, 16));
+        let cf: u32 = concurrent.parse().unwrap_or(8);
+        let cf_str = format!("{}", cf.clamp(1, 16));
 
-    let args = vec![
-        "-o".to_string(),
-        output_str.clone(),
-        "-f".to_string(),
-        format_str,
-        "--no-check-certificates".to_string(),
-        "--no-warnings".to_string(),
-        "--no-playlist".to_string(),
-        "--no-update".to_string(),
-        "--ignore-config".to_string(),
-        "--no-write-info-json".to_string(),
-        "--no-write-comments".to_string(),
-        "--no-write-subs".to_string(),
-        "--no-embed-metadata".to_string(),
-        "--no-embed-thumbnail".to_string(),
-        "--no-mtime".to_string(),
-        "--newline".to_string(),
-        "--concurrent-fragments".to_string(),
-        cf_str,
-        "--write-thumbnail".to_string(),
-        url.clone(),
-    ];
-    let mut cmd = Command::new(&ytdlp_path);
-    suppress_console_window(&mut cmd);
-    let output = cmd.args(&args).output().map_err(|e| {
+        let args = vec![
+            "-o".to_string(),
+            output_str.clone(),
+            "-f".to_string(),
+            format_str,
+            "--no-check-certificates".to_string(),
+            "--no-warnings".to_string(),
+            "--no-playlist".to_string(),
+            "--no-update".to_string(),
+            "--ignore-config".to_string(),
+            "--no-write-info-json".to_string(),
+            "--no-write-comments".to_string(),
+            "--no-write-subs".to_string(),
+            "--no-embed-metadata".to_string(),
+            "--no-embed-thumbnail".to_string(),
+            "--no-mtime".to_string(),
+            "--newline".to_string(),
+            "--concurrent-fragments".to_string(),
+            cf_str,
+            "--write-thumbnail".to_string(),
+            url.clone(),
+        ];
+
+        let session = Arc::new(VideoDownloadSessionInner {
+            cancel: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            child: Mutex::new(None),
+        });
+        install_video_download_session(&download_ctrl, session.clone());
+
+        let stderr_tail = Arc::new(Mutex::new(String::new()));
+        // yt-dlp may print "%" progress or "k of n" fragments; match loosely. Some builds buffer
+        // stderr when piped — PYTHONUNBUFFERED helps Python-based yt-dlp on Windows.
+        let re_pct = Regex::new(r"(?i)\[download\][^\n\r]*?(\d+(?:\.\d+)?)\s*%")
+            .map_err(|e| e.to_string())?;
+        let re_frag = Regex::new(r"(?i)\[download\][^\n\r]*?\b(\d+)\s+of\s+(\d+)\b")
+            .map_err(|e| e.to_string())?;
+
+        let app_emit = app.clone();
+        let cancel_reader = session.cancel.clone();
+        let paused_reader = session.paused.clone();
+        let tail_reader = stderr_tail.clone();
+
+        let mut cmd = Command::new(&ytdlp_path);
+        suppress_console_window(&mut cmd);
+        cmd.args(&args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .env("PYTHONUNBUFFERED", "1");
+
+        let mut child = cmd.spawn().map_err(|e| {
             log::error!(
                 "[yt-dlp] spawn failed path={} err={}",
                 ytdlp_path.display(),
@@ -5491,148 +5993,301 @@ pub async fn download_video_from_url(
             )
         })?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        log::error!(
-            "[yt-dlp] failed code={:?} stderr={}",
-            output.status.code(),
-            stderr.trim()
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "yt-dlp stderr pipe unavailable".to_string())?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "yt-dlp stdout pipe unavailable".to_string())?;
+
+        {
+            let mut ch = session
+                .child
+                .lock()
+                .map_err(|_| "video download child lock poisoned")?;
+            *ch = Some(child);
+        }
+
+        let re_pct_out = re_pct.clone();
+        let re_frag_out = re_frag.clone();
+        let app_out = app_emit.clone();
+        let tail_out = tail_reader.clone();
+        let cancel_out = cancel_reader.clone();
+        let paused_out = paused_reader.clone();
+
+        let stdout_jh = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stdout);
+            let mut line = String::new();
+            loop {
+                while paused_out.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if cancel_out.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                if cancel_out.load(Ordering::SeqCst) {
+                    return;
+                }
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => ytdlp_emit_progress_from_line(
+                        &line,
+                        &app_out,
+                        &re_pct_out,
+                        &re_frag_out,
+                        &tail_out,
+                    ),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let stderr_jh = std::thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                while paused_reader.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(50));
+                    if cancel_reader.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                if cancel_reader.load(Ordering::SeqCst) {
+                    return;
+                }
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) => ytdlp_emit_progress_from_line(
+                        &line,
+                        &app_emit,
+                        &re_pct,
+                        &re_frag,
+                        &tail_reader,
+                    ),
+                    Err(_) => break,
+                }
+            }
+        });
+
+        let mut exit_status: Option<ExitStatus> = None;
+        loop {
+            if session.cancel.load(Ordering::SeqCst) {
+                if let Ok(mut ch) = session.child.lock() {
+                    if let Some(ref mut c) = *ch {
+                        let _ = c.kill();
+                    }
+                }
+                break;
+            }
+            let mut done = false;
+            if let Ok(mut ch) = session.child.lock() {
+                if let Some(ref mut c) = *ch {
+                    match c.try_wait() {
+                        Ok(Some(st)) => {
+                            exit_status = Some(st);
+                            *ch = None;
+                            done = true;
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            log::error!("[yt-dlp] try_wait error: {}", e);
+                            *ch = None;
+                            done = true;
+                        }
+                    }
+                }
+            }
+            if done {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let _ = stdout_jh.join();
+        let _ = stderr_jh.join();
+
+        if session.cancel.load(Ordering::SeqCst) {
+            if let Ok(mut ch) = session.child.lock() {
+                if let Some(mut c) = ch.take() {
+                    let _ = c.wait();
+                }
+            }
+            cleanup_ytdlp_temp_by_prefix(&vault.media_dir, &temp_prefix);
+            return Ok(serde_json::json!({ "ok": false, "cancelled": true }));
+        }
+
+        let Some(st) = exit_status else {
+            cleanup_ytdlp_temp_by_prefix(&vault.media_dir, &temp_prefix);
+            return Err("yt-dlp process ended unexpectedly".to_string());
+        };
+
+        if !st.success() {
+            let tail = stderr_tail
+                .lock()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            log::error!(
+                "[yt-dlp] failed code={:?} stderr_tail={}",
+                st.code(),
+                tail
+            );
+            cleanup_ytdlp_temp_by_prefix(&vault.media_dir, &temp_prefix);
+            let msg = if tail.is_empty() {
+                "yt-dlp failed".to_string()
+            } else {
+                format!("yt-dlp failed: {}", tail)
+            };
+            return Err(msg);
+        }
+        info!("[yt-dlp] download command completed successfully");
+        let _ = app.emit(
+            "video-download-progress",
+            serde_json::json!({ "percent": 100 }),
         );
-        return Err(format!("yt-dlp failed: {}", stderr.trim()));
-    }
-    info!("[yt-dlp] download command completed successfully");
 
-    let files: Vec<_> = fs::read_dir(&vault.media_dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .file_stem()
-                .map(|s| s.to_string_lossy() == temp_prefix)
-                .unwrap_or(false)
-        })
-        .collect();
+        let files: Vec<_> = fs::read_dir(&vault.media_dir)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.path()
+                    .file_stem()
+                    .map(|s| s.to_string_lossy() == temp_prefix)
+                    .unwrap_or(false)
+            })
+            .collect();
 
-    let video_path = files
-        .iter()
-        .find(|e| {
+        let video_path = files
+            .iter()
+            .find(|e| {
+                let ext = e
+                    .path()
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_lowercase())
+                    .unwrap_or_default();
+                matches!(
+                    ext.as_str(),
+                    "mp4" | "webm" | "mkv" | "mov" | "avi" | "wmv" | "m4v" | "flv"
+                )
+            })
+            .map(|e| e.path())
+            .ok_or_else(|| "Download completed but video file not found".to_string())?;
+
+        let mut thumbnail_rel: Option<String> = None;
+        if let Some(thumb_entry) = files.iter().find(|e| {
             let ext = e
                 .path()
                 .extension()
                 .map(|e| e.to_string_lossy().to_lowercase())
                 .unwrap_or_default();
-            matches!(
-                ext.as_str(),
-                "mp4" | "webm" | "mkv" | "mov" | "avi" | "wmv" | "m4v" | "flv"
-            )
-        })
-        .map(|e| e.path())
-        .ok_or_else(|| "Download completed but video file not found".to_string())?;
-
-    let mut thumbnail_rel: Option<String> = None;
-    if let Some(thumb_entry) = files.iter().find(|e| {
-        let ext = e
-            .path()
-            .extension()
-            .map(|e| e.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        matches!(ext.as_str(), "jpg" | "jpeg" | "webp" | "png")
-    }) {
-        let thumb_src = thumb_entry.path();
-        let thumb_dest = next_vault_uuid_path(&vault.thumbs_dir);
-        fs::create_dir_all(&vault.thumbs_dir).ok();
-        if fs::copy(&thumb_src, &thumb_dest).is_ok() {
-            thumbnail_rel = Some(rel_to_vault(&vault.root, &thumb_dest));
+            matches!(ext.as_str(), "jpg" | "jpeg" | "webp" | "png")
+        }) {
+            let thumb_src = thumb_entry.path();
+            let thumb_dest = next_vault_uuid_path(&vault.thumbs_dir);
+            fs::create_dir_all(&vault.thumbs_dir).ok();
+            if fs::copy(&thumb_src, &thumb_dest).is_ok() {
+                thumbnail_rel = Some(rel_to_vault(&vault.root, &thumb_dest));
+            }
+            let _ = fs::remove_file(&thumb_src);
         }
-        let _ = fs::remove_file(&thumb_src);
-    }
 
-    let vault_media_path = next_vault_uuid_path(&vault.media_dir);
-    fs::rename(&video_path, &vault_media_path).map_err(|e| e.to_string())?;
-    let stored_rel = rel_to_vault(&vault.root, &vault_media_path);
-    let vault_id = vault_media_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_string();
-    let original_filename = format!(
-        "video.{}",
-        video_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("mp4")
-    );
-    let mime_type = detect_mime_from_filename(&original_filename);
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-    let final_title = title
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Downloaded video".to_string());
+        let vault_media_path = next_vault_uuid_path(&vault.media_dir);
+        fs::rename(&video_path, &vault_media_path).map_err(|e| e.to_string())?;
+        let stored_rel = rel_to_vault(&vault.root, &vault_media_path);
+        let vault_id = vault_media_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let original_filename = format!(
+            "video.{}",
+            video_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mp4")
+        );
+        let mime_type = detect_mime_from_filename(&original_filename);
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let final_title = title
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Downloaded video".to_string());
 
-    let conn = db.conn();
-    let aspect_ratio = get_media_aspect_ratio(&vault_media_path, "video");
-    conn.execute(
-        r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, vault_id, mime_type)
-           VALUES (?, 'video', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)"#,
-        rusqlite::params![
-            id,
-            final_title,
-            url,
-            original_filename,
-            stored_rel,
-            thumbnail_rel,
+        let conn = db.conn();
+        let aspect_ratio = get_media_aspect_ratio(&vault_media_path, "video");
+        conn.execute(
+            r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, vault_id, mime_type)
+               VALUES (?, 'video', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?)"#,
+            rusqlite::params![
+                id,
+                final_title,
+                url,
+                original_filename,
+                stored_rel,
+                thumbnail_rel,
+                aspect_ratio,
+                ts,
+                ts,
+                vault_id,
+                mime_type
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        add_inspiration_to_unsorted(&conn, &id)?;
+
+        let source = if extract_youtube_video_id(&url).is_some() {
+            "youtube"
+        } else if url.contains("instagram.com") {
+            "instagram"
+        } else {
+            "web"
+        };
+        let platform = if source == "youtube" {
+            Some("youtube")
+        } else if source == "instagram" {
+            Some("instagram")
+        } else {
+            None
+        };
+        let _ = tags::apply_system_tags(
+            &conn,
+            &id,
+            source,
+            "video",
             aspect_ratio,
-            ts,
-            ts,
-            vault_id,
-            mime_type
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+            platform,
+            channel_name.as_deref(),
+        );
 
-    let source = if extract_youtube_video_id(&url).is_some() {
-        "youtube"
-    } else if url.contains("instagram.com") {
-        "instagram"
-    } else {
-        "web"
-    };
-    let platform = if source == "youtube" {
-        Some("youtube")
-    } else if source == "instagram" {
-        Some("instagram")
-    } else {
-        None
-    };
-    let _ = tags::apply_system_tags(
-        &conn,
-        &id,
-        source,
-        "video",
-        aspect_ratio,
-        platform,
-        channel_name.as_deref(),
-    );
-
-    let stored_url = abs_path_for_webview(&vault_media_path);
-    let thumb_url = thumbnail_rel
-        .as_ref()
-        .and_then(|r| abs_path_for_webview(&vault.root.join(r)));
-    Ok(serde_json::json!({
-        "ok": true,
-        "inspiration": {
-            "id": id,
-            "type": "video",
-            "title": final_title,
-            "source_url": url,
-            "stored_path": stored_rel,
-            "stored_path_url": stored_url,
-            "thumbnail_path": thumbnail_rel,
-            "thumbnail_path_url": thumb_url
-        }
-    }))
+        let stored_url = abs_path_for_webview(&vault_media_path);
+        let thumb_url = thumbnail_rel
+            .as_ref()
+            .and_then(|r| abs_path_for_webview(&vault.root.join(r)));
+        Ok(serde_json::json!({
+            "ok": true,
+            "inspiration": {
+                "id": id,
+                "type": "video",
+                "title": final_title,
+                "source_url": url,
+                "stored_path": stored_rel,
+                "stored_path_url": stored_url,
+                "thumbnail_path": thumbnail_rel,
+                "thumbnail_path_url": thumb_url
+            }
+        }))
+        };
+        let out = run();
+        clear_video_download_session(&download_ctrl);
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 fn add_inspirations_from_paths_impl(
@@ -5695,6 +6350,7 @@ fn add_inspirations_from_paths_impl(
             ],
         )
         .map_err(|e| e.to_string())?;
+        add_inspiration_to_unsorted(&conn, &id)?;
 
         let _ = tags::apply_system_tags(
             &conn,
@@ -5954,6 +6610,7 @@ pub async fn add_thumbnail_from_video_url(
                                     ],
                                 )
                                 .map_err(|e| e.to_string())?;
+                                add_inspiration_to_unsorted(&conn, &id_clone)?;
                                 let stored_url = abs_path_for_webview(&dest);
                                 let response = serde_json::json!({
                                     "id": id_clone,
@@ -6060,43 +6717,12 @@ pub async fn add_thumbnail_from_video_url(
         return Err(format!("yt-dlp failed: {}", stderr.trim()));
     }
 
-    let thumb_file = fs::read_dir(&thumbs_dir)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .find(|e| {
-            e.path()
-                .file_stem()
-                .map(|s| s.to_string_lossy() == id)
-                .unwrap_or(false)
-                && e.path()
-                    .extension()
-                    .map(|e| {
-                        let ext = e.to_string_lossy().to_lowercase();
-                        matches!(ext.as_str(), "jpg" | "jpeg" | "webp" | "png")
-                    })
-                    .unwrap_or(false)
-        })
-        .map(|e| e.path())
-        .ok_or_else(|| "Thumbnail not found after download".to_string())?;
-
-    let vault_thumb_path = next_vault_uuid_path(&thumbs_dir);
-    fs::rename(&thumb_file, &vault_thumb_path).map_err(|e| e.to_string())?;
-    let stored_rel = rel_to_vault(&vault_root, &vault_thumb_path);
-    let vault_id = vault_thumb_path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_string();
-
-    let final_title = title
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "Thumbnail".to_string());
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis() as i64;
-
-    let conn = db.conn();
+    let db_non_yt = db.inner().clone();
+    let thumbs_dir_non_yt = thumbs_dir.clone();
+    let vault_root_non_yt = vault_root.clone();
+    let id_non_yt = id.clone();
+    let url_non_yt = url.clone();
+    let title_non_yt = title.clone();
     let source = if url.contains("youtube.com") || url.contains("youtu.be") {
         "youtube"
     } else if url.contains("instagram.com") {
@@ -6104,41 +6730,86 @@ pub async fn add_thumbnail_from_video_url(
     } else {
         "web"
     };
-    // Insert with aspect_ratio = None so we don't block the async thread with image::open(); background thread will set it
-    conn.execute(
-        r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, vault_id, mime_type)
-           VALUES (?, 'image', ?, ?, 'thumbnail.jpg', ?, NULL, NULL, ?, ?, ?, ?, ?)"#,
-        rusqlite::params![
-            id,
-            final_title,
-            url,
-            stored_rel,
-            None::<f64>,
-            ts,
-            ts,
-            vault_id,
-            "image/jpeg"
-        ],
-    )
-    .map_err(|e| e.to_string())?;
+    let source_non_yt = source.to_string();
 
-    let stored_url = abs_path_for_webview(&vault_thumb_path);
-    let response = serde_json::json!({
-        "id": id,
-        "type": "image",
-        "title": final_title,
-        "stored_path": stored_rel,
-        "stored_path_url": stored_url,
-        "thumbnail_path_url": stored_url
-    });
+    let (response, stored_rel) = tauri::async_runtime::spawn_blocking(move || -> Result<(serde_json::Value, String), String> {
+        let thumb_file = fs::read_dir(&thumbs_dir_non_yt)
+            .map_err(|e| e.to_string())?
+            .filter_map(|e| e.ok())
+            .find(|e| {
+                e.path()
+                    .file_stem()
+                    .map(|s| s.to_string_lossy() == id_non_yt)
+                    .unwrap_or(false)
+                    && e.path()
+                        .extension()
+                        .map(|e| {
+                            let ext = e.to_string_lossy().to_lowercase();
+                            matches!(ext.as_str(), "jpg" | "jpeg" | "webp" | "png")
+                        })
+                        .unwrap_or(false)
+            })
+            .map(|e| e.path())
+            .ok_or_else(|| "Thumbnail not found after download".to_string())?;
+
+        let vault_thumb_path = next_vault_uuid_path(&thumbs_dir_non_yt);
+        fs::rename(&thumb_file, &vault_thumb_path).map_err(|e| e.to_string())?;
+        let stored_rel = rel_to_vault(&vault_root_non_yt, &vault_thumb_path);
+        let vault_id = vault_thumb_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let final_title = title_non_yt
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "Thumbnail".to_string());
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let conn = db_non_yt.conn();
+        // Insert with aspect_ratio = None so we don't block with image::open(); background thread will set it
+        conn.execute(
+            r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, vault_id, mime_type)
+               VALUES (?, 'image', ?, ?, 'thumbnail.jpg', ?, NULL, NULL, ?, ?, ?, ?, ?)"#,
+            rusqlite::params![
+                id_non_yt,
+                final_title,
+                url_non_yt,
+                stored_rel,
+                None::<f64>,
+                ts,
+                ts,
+                vault_id,
+                "image/jpeg"
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        add_inspiration_to_unsorted(&conn, &id_non_yt)?;
+
+        let stored_url = abs_path_for_webview(&vault_thumb_path);
+        let response = serde_json::json!({
+            "id": id_non_yt,
+            "type": "image",
+            "title": final_title,
+            "stored_path": stored_rel,
+            "stored_path_url": stored_url,
+            "thumbnail_path_url": stored_url
+        });
+        Ok((response, stored_rel))
+    })
+    .await
+    .map_err(|e| e.to_string())??;
 
     let db_enrich = db.inner().clone();
     let vault_enrich = vault.inner().clone();
     let id_enrich = id.clone();
     let url_enrich = url.clone();
     let ytdlp_enrich = ytdlp_path.clone();
-    let source_enrich = source.to_string();
-    let stored_rel_enrich = stored_rel.clone();
+    let source_enrich = source_non_yt;
+    let stored_rel_enrich = stored_rel;
     // Use a separate OS thread so we don't block the async runtime or exhaust the blocking pool
     std::thread::spawn(move || {
         let path = vault_enrich.root.join(&stored_rel_enrich);
@@ -6271,6 +6942,7 @@ pub async fn add_thumbnail_from_url(
             ],
         )
         .map_err(|e| e.to_string())?;
+        add_inspiration_to_unsorted(&conn, &id)?;
 
         let source = if url.contains("youtube.com") || url.contains("ytimg.com") {
             "youtube"
@@ -6470,6 +7142,7 @@ pub async fn add_media_from_url(
             ],
         )
         .map_err(|e| e.to_string())?;
+        add_inspiration_to_unsorted(&conn, &id)?;
 
         let source = if url.contains("notion") || url.contains("amazonaws.com") {
             "notion"
@@ -7630,24 +8303,43 @@ fn resolve_image_path_for_analysis(
         None => return Ok(None),
     };
 
-    // OCR/palette: static images only. Skip videos and gifs.
-    let path_to_analyze = match (&stored_path, &thumbnail_path) {
-        (Some(sp), _) if media_type == "image" => {
-            resolve_vault_relative_existing_path(&vault.root, sp).ok()
+    let try_one = |rel: Option<&String>| -> Option<PathBuf> {
+        let s = rel?.trim();
+        if s.is_empty() {
+            return None;
         }
-        (_, Some(tp)) if media_type == "image" => {
-            resolve_vault_relative_existing_path(&vault.root, tp).ok()
-        }
-        (_, Some(tp)) if media_type == "link" => {
-            resolve_vault_relative_existing_path(&vault.root, tp).ok()
-        }
-        _ => None,
+        resolve_vault_relative_existing_path(&vault.root, s).ok()
     };
 
-    Ok(match path_to_analyze {
-        Some(p) if p.exists() => Some(p),
-        _ => None,
-    })
+    // OCR/palette: static images only. Skip videos and gifs.
+    // For `image`, try stored file first, then thumbnail — the first match arm used to skip
+    // thumbnail whenever stored_path was non-null, even if that path was broken.
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    match media_type.as_str() {
+        "image" => {
+            if let Some(p) = try_one(stored_path.as_ref()) {
+                candidates.push(p);
+            }
+            if let Some(p) = try_one(thumbnail_path.as_ref()) {
+                if !candidates.iter().any(|c| c == &p) {
+                    candidates.push(p);
+                }
+            }
+        }
+        "link" => {
+            if let Some(p) = try_one(thumbnail_path.as_ref()) {
+                candidates.push(p);
+            }
+            if let Some(p) = try_one(stored_path.as_ref()) {
+                if !candidates.iter().any(|c| c == &p) {
+                    candidates.push(p);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    Ok(candidates.into_iter().find(|p| p.exists()))
 }
 
 fn normalize_ocr_text(raw: &str) -> String {
@@ -8069,21 +8761,62 @@ fn do_extract_palette(
 ) -> Result<bool, String> {
     let path = match resolve_image_path_for_analysis(db, vault, inspiration_id)? {
         Some(p) => p,
-        None => return Ok(false),
+        None => {
+            warn!(
+                "[palette] extract skipped | id={} | reason=no_resolvable_image_path",
+                inspiration_id
+            );
+            return Ok(false);
+        }
     };
 
-    let p = match palette::extract_palette_from_image(&path) {
+    let conn = db.conn();
+    let (mime_hint, name_hint): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT mime_type, original_filename FROM inspirations WHERE id = ?",
+            [inspiration_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let p = match palette::extract_palette_from_image(
+        &path,
+        mime_hint.as_deref(),
+        name_hint.as_deref(),
+    ) {
         Ok(p) => p,
-        Err(_) => return Ok(false),
+        Err(e) => {
+            warn!(
+                "[palette] extract failed | id={} | path={} | err={}",
+                inspiration_id,
+                path.display(),
+                e
+            );
+            return Ok(false);
+        }
     };
 
     let json = serde_json::to_string(&p.colors).map_err(|e| e.to_string())?;
-    let conn = db.conn();
-    conn.execute(
-        "UPDATE inspirations SET palette = ? WHERE id = ?",
-        rusqlite::params![json, inspiration_id.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    let n = conn
+        .execute(
+            "UPDATE inspirations SET palette = ? WHERE id = ?",
+            rusqlite::params![json, inspiration_id.to_string()],
+        )
+        .map_err(|e| e.to_string())?;
+    if n == 0 {
+        warn!(
+            "[palette] extract no row updated | id={} | path={}",
+            inspiration_id,
+            path.display()
+        );
+        return Ok(false);
+    }
+    info!(
+        "[palette] extract ok | id={} | path={} | swatches={}",
+        inspiration_id,
+        path.display(),
+        p.colors.len()
+    );
     Ok(true)
 }
 
@@ -8113,6 +8846,10 @@ pub async fn extract_ocr_text(
     tauri::async_runtime::spawn_blocking(move || {
         let ok = do_extract_ocr_text(&db, &vault, &inspiration_id)?;
         if !ok {
+            warn!(
+                "[ocr] no_text | item_id={} | reason=tesseract_or_no_image_path",
+                inspiration_id
+            );
             // Tesseract unavailable or no image path — mark as no_text so the
             // item is not endlessly re-queued.
             let conn = db.conn();
@@ -8120,6 +8857,8 @@ pub async fn extract_ocr_text(
                 "UPDATE inspirations SET ocr_text = '', ocr_status = 'no_text' WHERE id = ? AND (ocr_status IS NULL OR ocr_status IN ('processing', 'pending'))",
                 rusqlite::params![&inspiration_id],
             );
+        } else {
+            info!("[ocr] extract_ok | item_id={}", inspiration_id);
         }
         Ok(ok)
     })
@@ -8324,24 +9063,46 @@ pub async fn get_inspiration_ocr_debug(
     let vault = vault.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let force_refresh = force_refresh.unwrap_or(false);
-        let row: Option<(String, String, Option<String>)> = {
+        let row: Option<(String, String, Option<String>, Option<String>)> = {
             let conn = db.conn();
             conn.query_row(
-                "SELECT type, COALESCE(ocr_text, ''), ocr_status FROM inspirations WHERE id = ?",
+                "SELECT type, COALESCE(ocr_text, ''), ocr_status, palette FROM inspirations WHERE id = ?",
                 [inspiration_id.clone()],
                 |r| {
                     Ok((
                         r.get::<_, String>(0)?,
                         r.get::<_, String>(1)?,
                         r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
                     ))
                 },
             )
             .optional()
             .map_err(|e| e.to_string())?
         };
-        let (media_type, ocr_text, ocr_status) =
+        let (media_type, ocr_text, ocr_status, palette_json) =
             row.ok_or_else(|| "Inspiration not found".to_string())?;
+
+        let palette_swatches: Vec<OcrDebugPaletteSwatch> = palette_json
+            .as_deref()
+            .and_then(|s| {
+                let s = s.trim();
+                if s.is_empty() {
+                    return None;
+                }
+                serde_json::from_str::<Vec<[f32; 3]>>(s).ok()
+            })
+            .map(|labs| {
+                labs.iter()
+                    .map(|lab| OcrDebugPaletteSwatch {
+                        hex: palette::lab_to_hex(lab),
+                        lab_l: lab[0],
+                        lab_a: lab[1],
+                        lab_b: lab[2],
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let analysis_path = resolve_image_path_for_analysis(&db, &vault, &inspiration_id)?;
         let can_attempt_ocr = analysis_path.is_some();
@@ -8415,6 +9176,7 @@ pub async fn get_inspiration_ocr_debug(
                 .and_then(|p| p.canonicalize().ok().or(Some(p)))
                 .map(|p| p.to_string_lossy().to_string()),
             tesseract_binary: resolve_tesseract_binary().map(|p| p.to_string_lossy().to_string()),
+            palette: palette_swatches,
         })
     })
     .await

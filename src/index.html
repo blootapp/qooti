@@ -100,55 +100,81 @@
 
       <section id="surveyView" class="survey-view hidden" aria-label="Onboarding survey">
         <div class="survey-view__bg" aria-hidden="true"></div>
-        <button type="button" id="surveyLangToggle" class="language-toggle" title="Switch language" aria-label="Switch language">
+        <button type="button" id="surveyLangToggle" class="language-toggle survey-view__lang" title="Switch language" aria-label="Switch language">
           <span class="ui-icon language-toggle__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
         </button>
         <div class="survey-view__inner">
           <div id="surveySteps" class="survey-view__steps">
             <div class="survey-view__step" data-step="0" aria-hidden="true">
-              <div class="survey-view__shell">
-                <div class="survey-view__header">
-                  <div class="survey-view__meta">
+              <div class="survey-view__shell survey-view__shell--single">
+                <header class="survey-view__topbar">
+                  <div
+                    id="surveyProgressTrack"
+                    class="survey-view__progress-track"
+                    role="progressbar"
+                    aria-valuemin="1"
+                    aria-valuemax="5"
+                    aria-valuenow="1"
+                    aria-label=""
+                  >
+                    <span id="surveyProgressFill" class="survey-view__progress-fill"></span>
+                  </div>
+                  <div class="survey-view__nav-row">
+                    <button
+                      id="surveyBackBtn"
+                      type="button"
+                      class="survey-view__back btn-icon hidden"
+                      data-i18n-aria-label="survey.back"
+                      aria-label="Back"
+                    >
+                      <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                    </button>
+                    <span id="surveyProgress" class="survey-view__step-pill" aria-live="polite">1 / 5</span>
+                  </div>
+                </header>
+                <div class="survey-view__card">
+                  <div class="survey-view__body">
                     <p class="survey-view__eyebrow" data-i18n="survey.eyebrow">Set up your Qooti experience</p>
-                    <p id="surveyProgress" class="survey-view__progress" aria-live="polite">1 / 5</p>
+                    <h2 id="surveyQuestionTitle" class="survey-view__question">What kind of creative work do you do most?</h2>
+                    <p id="surveyQuestionHint" class="survey-view__hint">Choose the option that feels closest to your day-to-day creative work.</p>
+                    <p id="surveyOptionsSectionLabel" class="survey-view__section-label hidden" data-i18n="survey.choicesSection">Options</p>
+                    <div id="surveyOptions" class="survey-view__options" role="list"></div>
                   </div>
-                  <div class="survey-view__bar" aria-hidden="true">
-                    <span id="surveyProgressFill" class="survey-view__bar-fill"></span>
-                  </div>
-                </div>
-                <div class="survey-view__body">
-                  <h2 id="surveyQuestionTitle" class="survey-view__question">What kind of creative work do you do most?</h2>
-                  <p id="surveyQuestionHint" class="survey-view__hint">Choose the option that feels closest to your day-to-day creative work.</p>
-                  <div id="surveyOptions" class="survey-view__options" role="list"></div>
-                </div>
-                <div class="survey-view__actions">
-                  <button id="surveyBackBtn" type="button" class="btn btn--secondary survey-view__back hidden" data-i18n="survey.back">Back</button>
-                  <button id="surveyNextBtn" type="button" class="btn btn--primary survey-view__next" disabled data-i18n="survey.next">Next</button>
+                  <footer class="survey-view__footer">
+                    <span id="surveyMultiCount" class="survey-view__multi-count hidden" aria-live="polite"></span>
+                    <button id="surveyNextBtn" type="button" class="survey-view__next btn btn--primary" disabled>
+                      <span class="survey-view__next-label" data-i18n="survey.next">Next</span>
+                      <span
+                        class="ui-icon survey-view__next-icon"
+                        style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')"
+                        aria-hidden="true"
+                      ></span>
+                    </button>
+                  </footer>
                 </div>
               </div>
             </div>
           </div>
-          <div id="surveySuccessScreen" class="survey-view__success hidden" aria-hidden="true">
-            <div class="survey-view__shell survey-view__shell--success">
-              <div class="survey-view__header">
-                <div class="survey-view__meta">
-                  <p class="survey-view__eyebrow" data-i18n="survey.eyebrow">Set up your Qooti experience</p>
-                  <p class="survey-view__progress" data-i18n="survey.collections">Collections</p>
-                </div>
-                <div class="survey-view__bar" aria-hidden="true">
-                  <span class="survey-view__bar-fill survey-view__bar-fill--full"></span>
-                </div>
-              </div>
-              <div class="survey-view__body">
-                <h2 class="survey-view__success-title" data-i18n="survey.successTitle">Great — let's set up your inspiration library.</h2>
-                <p class="survey-view__success-hint" data-i18n="survey.successHint">Everything is listed below. We’ve already checked the collections that match your creative interests.</p>
-                <div id="surveyRecommendedList" class="survey-view__recommended" role="list"></div>
-              </div>
-              <div class="survey-view__actions survey-view__actions--success">
-                <button id="surveyContinueBtn" type="button" class="btn btn--primary survey-view__continue" data-i18n="survey.continue">Continue</button>
-              </div>
-            </div>
+        </div>
+        <div id="surveySuccessScreen" class="survey-library hidden" aria-hidden="true">
+          <header class="survey-library__header">
+            <p class="survey-library__eyebrow" data-i18n="survey.libraryEyebrow">Inspiration library</p>
+            <h1 class="survey-library__title" data-i18n="survey.libraryTitle">Choose your free starter packs</h1>
+            <p class="survey-library__subtitle" data-i18n="survey.librarySubtitle">
+              Curated collections you can add in one tap—like browsing a store. Recommended picks for your role are highlighted.
+            </p>
+          </header>
+          <div class="survey-library__scroll">
+            <div id="surveyRecommendedList" class="survey-library__grid" role="list"></div>
           </div>
+          <footer class="survey-library__bar">
+            <div class="survey-library__bar-inner">
+              <p class="survey-library__bar-hint" data-i18n="survey.libraryBarHint">Selected packs will be created as collections in Qooti.</p>
+              <button id="surveyContinueBtn" type="button" class="survey-library__cta btn btn--primary" data-i18n="survey.continue">
+                Continue
+              </button>
+            </div>
+          </footer>
         </div>
       </section>
 
@@ -573,10 +599,6 @@
                       </div>
                     </div>
                     <div class="settings-field settings-field--toggle">
-                      <label class="settings-field__label" for="settingEnableTagFilters" data-i18n="settings.enableTagFilters">Enable tag filters</label>
-                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingEnableTagFilters" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
-                    </div>
-                    <div class="settings-field settings-field--toggle">
                       <label class="settings-field__label" for="settingUseSimpleSizeControl" data-i18n="settings.useSimpleSizeControl">Use simple size control</label>
                       <label class="settings-toggle-wrap"><input type="checkbox" id="settingUseSimpleSizeControl" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
                     </div>
@@ -651,6 +673,13 @@
                       <button type="button" id="extensionCopyKey" class="btn btn--sm" data-i18n="settings.copyKey">Copy key</button>
                       <button type="button" id="extensionRegenerateKey" class="btn btn--sm btn--secondary" style="margin-left: 8px;" data-i18n="settings.regenerateKey">Regenerate key</button>
                     </div>
+                    <div class="settings-field settings-field--toggle" style="margin-top: 12px;">
+                      <div>
+                        <label class="settings-field__label" for="settingShowExtensionCollectionPicker" data-i18n="settings.showCollectionPickerWhenSaving">Show collection picker when saving</label>
+                        <p class="settings-license__hint" data-i18n="settings.showCollectionPickerWhenSavingHint">Choose a collection each time you save media</p>
+                      </div>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingShowExtensionCollectionPicker" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
                     <p class="settings-license__hint" style="margin-top: 12px;" data-i18n="settings.extensionHint">Use this key in the Qooti browser extension. Regenerating invalidates previous keys.</p>
                   </div>
                 </div>
@@ -692,6 +721,20 @@
                 <div id="settingsPanelTags" class="settings-panel" role="tabpanel">
                   <h2 class="settings-panel__title" data-i18n="settings.panel.tags">Tags &amp; Quick Tags</h2>
                   <div class="settings-group">
+                    <div class="settings-field settings-field--toggle">
+                      <label class="settings-field__label" for="settingEnableTagFilters" data-i18n="settings.enableTagFilters">Enable tag filters</label>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingEnableTagFilters" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
+                    </div>
+                    <div id="settingsTagFilterBarManage" class="settings-tag-filter-manage">
+                      <h3 class="settings-subpanel__title settings-tag-filter-manage__title" data-i18n="settings.tagFilterBarTitle">Tag filter bar</h3>
+                      <p class="settings-hint settings-tag-filter-manage__hint" data-i18n="settings.tagFilterBarHint">Right-click a tag on the home bar to hide it. Restore hidden tags below.</p>
+                      <div id="settingsTagFilterBarHiddenSection" class="settings-tag-filter-hidden-block hidden">
+                        <div class="settings-tag-filter-inline-label" data-i18n="settings.tagFilterBarHiddenLabel">Hidden from bar</div>
+                        <div class="settings-tag-filter-hidden-scroll">
+                          <div id="settingsTagFilterBarHiddenList" class="settings-tag-filter-hidden-list"></div>
+                        </div>
+                      </div>
+                    </div>
                     <div class="settings-field settings-field--toggle">
                       <label class="settings-field__label" for="settingQuickTagsDefaultEnabled" data-i18n="settings.showDefaultQuickTags">Show default quick tags</label>
                       <label class="settings-toggle-wrap"><input type="checkbox" id="settingQuickTagsDefaultEnabled" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
@@ -829,8 +872,21 @@
           <circle class="download-indicator__ring-fill" cx="18" cy="18" r="16" fill="none" stroke-width="2" stroke-dasharray="100" stroke-dashoffset="100" />
         </svg>
       </div>
-      <span class="download-indicator__label" id="downloadIndicatorLabel" data-i18n="download.downloadingVideo">Downloading video…</span>
-      <span class="download-indicator__percent" id="downloadIndicatorPercent"></span>
+      <div class="download-indicator__col" id="downloadIndicatorCol">
+        <div class="download-indicator__row">
+          <span class="download-indicator__label" id="downloadIndicatorLabel" data-i18n="download.downloadingVideo">Downloading video…</span>
+          <span class="download-indicator__percent" id="downloadIndicatorPercent"></span>
+        </div>
+      </div>
+      <div class="download-indicator__dl-actions hidden" id="downloadIndicatorActions" aria-hidden="true">
+        <button type="button" class="download-indicator__icon-btn" id="downloadIndicatorPauseBtn" aria-label="Pause">
+          <img id="downloadIndicatorPauseImg" src="assets/icons/player/pause-icon.svg" alt="" />
+          <img class="hidden" src="assets/icons/player/play-icon.svg" alt="" id="downloadIndicatorPlayImg" />
+        </button>
+        <button type="button" class="download-indicator__icon-btn" id="downloadIndicatorCancelBtn" aria-label="Cancel">
+          <img src="assets/icons/player/close-circle-fill.svg" alt="" />
+        </button>
+      </div>
     </div>
 
     <!-- Bottom OCR indexing indicator -->
@@ -866,72 +922,91 @@
       <button type="button" class="download-indicator__hide-btn" id="updateIndicatorHideBtn">Hide</button>
     </div>
 
-    <!-- Media Preview — minimal, cinematic, content-first -->
+    <!-- Media Preview — centered modal viewer -->
     <div id="mediaPreview" class="media-preview hidden">
       <div class="media-preview__backdrop"></div>
       <div class="media-preview__content">
-        <button id="mediaPreviewClose" class="media-preview__close" data-i18n-title="preview.closeEsc" title="Close (Esc)" data-i18n-aria-label="preview.close" aria-label="Close">
-          <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
-        </button>
         <div class="media-preview__topbar">
-          <div class="media-preview__action-dock media-preview__action-dock--quick" id="mediaPreviewQuickActions">
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="copy" data-i18n-title="preview.copy" title="Copy file" data-i18n-aria-label="preview.copy" aria-label="Copy file">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
-            </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="download" data-i18n-title="preview.download" title="Download" data-i18n-aria-label="preview.download" aria-label="Download">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
-            </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--ghost" data-action="open-source" data-i18n-title="preview.openSource" title="Open source" data-i18n-aria-label="preview.openSource" aria-label="Open source">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/external-link-line.svg')" aria-hidden="true"></span>
+          <div class="media-preview__topbar-group media-preview__topbar-group--left">
+            <span id="mediaPreviewCounter" class="media-preview__counter">0 / 0</span>
+          </div>
+          <div class="media-preview__topbar-group media-preview__topbar-group--right">
+            <button id="mediaPreviewClose" class="media-preview__top-btn" data-i18n-title="preview.closeEsc" title="Close (Esc)" data-i18n-aria-label="preview.close" aria-label="Close">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
             </button>
           </div>
         </div>
         <div class="media-preview__canvas-wrap">
+          <button type="button" id="mediaPreviewPrevSide" class="media-preview__nav-btn media-preview__nav-btn--left" data-i18n-title="preview.previous" title="Previous" data-i18n-aria-label="preview.previous" aria-label="Previous">
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+          </button>
           <div class="media-preview__hero" id="mediaPreviewArea">
             <div id="mediaPreviewExtracting" class="media-preview__extracting hidden">
               <div class="media-preview__extracting-spinner"></div>
               <span data-i18n="preview.extractingColors">Extracting colors…</span>
             </div>
           </div>
+          <button type="button" id="mediaPreviewNextSide" class="media-preview__nav-btn media-preview__nav-btn--right" data-i18n-title="preview.next" title="Next" data-i18n-aria-label="preview.next" aria-label="Next">
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
+          </button>
+          <div id="mediaPreviewVideoOverlay" class="media-preview__video-overlay hidden">
+            <div id="mediaPreviewTimelineWrap" class="media-preview__timeline-wrap">
+              <div id="mediaPreviewTimelineTrack" class="media-preview__timeline-track">
+                <div id="mediaPreviewTimelineBuffered" class="media-preview__timeline-buffered"></div>
+                <div id="mediaPreviewTimelineProgress" class="media-preview__timeline-progress"></div>
+                <div id="mediaPreviewTimelineThumb" class="media-preview__timeline-thumb"></div>
+              </div>
+            </div>
+            <div class="media-preview__video-controls-row">
+              <button type="button" id="mediaPreviewPlayPause" class="media-preview__video-btn media-preview__video-btn--circle" data-i18n-title="preview.playPause" title="Play/Pause">
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/player/play-icon.svg')" aria-hidden="true"></span>
+              </button>
+              <span id="mediaPreviewTime" class="media-preview__video-time">0:00 / 0:00</span>
+              <span class="media-preview__video-spacer"></span>
+              <button type="button" id="mediaPreviewMute" class="media-preview__video-btn" data-i18n-title="preview.mute" title="Mute">
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/player/volume-up-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div id="mediaPreviewVolumeWrap" class="media-preview__volume-wrap" data-i18n-title="preview.volume" title="Volume">
+                <div class="media-preview__volume-track">
+                  <div id="mediaPreviewVolumeProgress" class="media-preview__volume-progress"></div>
+                  <div id="mediaPreviewVolumeThumb" class="media-preview__volume-thumb"></div>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="media-preview__reel-feed hidden" id="mediaPreviewReelFeed"></div>
-        <div id="mediaPreviewVideoTools" class="media-preview__video-tools hidden">
-          <div class="media-preview__timeline-wrap">
-            <input type="range" id="mediaPreviewTimeline" class="media-preview__timeline" min="0" max="100" value="0" step="0.1" data-i18n-title="preview.scrub" title="Scrub" />
-          </div>
-          <div class="media-preview__action-dock media-preview__action-dock--video">
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewStepBack" data-i18n-title="preview.stepBack" title="Back 1 second" data-i18n-aria-label="preview.stepBack" aria-label="Back 1 second">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
-            </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewStepFwd" data-i18n-title="preview.stepForward" title="Forward 1 second" data-i18n-aria-label="preview.stepForward" aria-label="Forward 1 second">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
-            </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewCopyFrame" data-i18n-title="preview.copyFrame" title="Copy frame" data-i18n-aria-label="preview.copyFrame" aria-label="Copy frame">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/image-line.svg')" aria-hidden="true"></span>
-            </button>
-          </div>
-        </div>
         <div class="media-preview__bar">
           <div class="media-preview__bar-left">
-            <div class="media-preview__meta">
-              <h2 class="media-preview__title" id="mediaPreviewTitle"></h2>
-              <span class="media-preview__badge" id="mediaPreviewBadge"></span>
+            <h2 class="media-preview__title" id="mediaPreviewTitle"></h2>
+            <div class="media-preview__meta-row">
+              <span class="media-preview__badge media-preview__badge--local" id="mediaPreviewBadge" data-i18n="preview.localBadge">LOCAL</span>
+              <span class="media-preview__dot" aria-hidden="true"></span>
+              <span class="media-preview__meta-text" id="mediaPreviewType">rasm</span>
+              <span class="media-preview__dot" aria-hidden="true"></span>
+              <span class="media-preview__meta-text" id="mediaPreviewSize">—</span>
+              <span class="media-preview__dot" aria-hidden="true"></span>
+              <span class="media-preview__meta-text" id="mediaPreviewDimensions">—</span>
             </div>
-            <div class="media-preview__tags" id="mediaPreviewTags"></div>
           </div>
-          <div class="media-preview__bar-right media-preview__action-dock">
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--primary" id="mediaPreviewAddToCollection" data-i18n-title="preview.addToCollection" title="Add to collection" data-i18n-aria-label="preview.addToCollection" aria-label="Add to collection">
+          <div class="media-preview__bar-right">
+            <button type="button" class="media-preview__btn media-preview__btn--label" id="mediaPreviewCopy" data-i18n-title="preview.copy" title="Copy" data-i18n-aria-label="preview.copy" aria-label="Copy">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+              <span data-i18n="preview.copyShort">Nusxa</span>
+            </button>
+            <span class="media-preview__divider" aria-hidden="true"></span>
+            <button type="button" class="media-preview__btn media-preview__btn--icon" id="mediaPreviewAddToCollection" data-i18n-title="preview.addToCollection" title="Add to collection" data-i18n-aria-label="preview.addToCollection" aria-label="Add to collection">
               <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span>
             </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewEditTags" data-i18n-title="preview.editTags" title="Edit tags" data-i18n-aria-label="preview.editTags" aria-label="Edit tags">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span>
+            <button type="button" class="media-preview__btn media-preview__btn--label" id="mediaPreviewEditTags" data-i18n-title="preview.edit" title="Edit" data-i18n-aria-label="preview.edit" aria-label="Edit">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/pencil.svg')" aria-hidden="true"></span>
+              <span data-i18n="preview.edit">Edit</span>
             </button>
-            <button type="button" class="media-preview__icon-btn media-preview__icon-btn--surface" id="mediaPreviewFindRelated" data-i18n-title="preview.findRelated" title="Find related" data-i18n-aria-label="preview.findRelated" aria-label="Find related">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span>
+            <button type="button" class="media-preview__btn media-preview__btn--icon" id="mediaPreviewFindRelated" data-i18n-title="preview.findRelatedUz" title="O'xshashlarni topish" data-i18n-aria-label="preview.findRelated" aria-label="Find related">
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/bard-fill.svg')" aria-hidden="true"></span>
             </button>
           </div>
         </div>
-        <p class="media-preview__hint" id="mediaPreviewHint" data-i18n="preview.hint">Esc to close · Drag to copy</p>
       </div>
     </div>
 

@@ -14,7 +14,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, Tray
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_updater::UpdaterExt;
 
-use crate::commands::{FeedbackQueueState, TagCountBackfillState};
+use crate::commands::{FeedbackQueueState, TagCountBackfillState, VideoDownloadSessionState};
 use crate::db::Db;
 use crate::vault::{ensure_vault, get_vault_paths, write_vault_readme};
 
@@ -109,6 +109,7 @@ pub fn run() {
             let feedback_queue_state = FeedbackQueueState::new();
             commands::start_feedback_delivery_worker(db.clone(), feedback_queue_state.clone());
             app.manage(feedback_queue_state);
+            app.manage(VideoDownloadSessionState::default());
             app.manage(AppBackgroundState {
                 allow_quit: AtomicBool::new(false),
                 notifications_enabled: AtomicBool::new(notifications_enabled),
@@ -180,23 +181,40 @@ pub fn run() {
                     ])
                     .build(),
             )?;
+            commands::log_startup_session();
 
             let updater_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                let u0 = std::time::Instant::now();
                 match updater_handle.updater() {
                     Ok(updater) => match updater.check().await {
                         Ok(update) => {
+                            let available = update.is_some();
+                            let latest = update
+                                .as_ref()
+                                .map(|u| u.version.clone())
+                                .unwrap_or_default();
                             log::info!(
-                                "[Updater] startup check ok; update available={}",
-                                update.is_some()
+                                "[updater] result | update_available={} | latest={} | duration={}ms",
+                                available,
+                                latest,
+                                u0.elapsed().as_millis()
                             );
                         }
                         Err(err) => {
-                            log::error!("[Updater] startup check failed: {}", err);
+                            log::warn!(
+                                "[updater] check failed | duration={}ms | error={}",
+                                u0.elapsed().as_millis(),
+                                err
+                            );
                         }
                     },
                     Err(err) => {
-                        log::error!("[Updater] startup updater init failed: {}", err);
+                        log::error!(
+                            "[updater] init failed | duration={}ms | error={}",
+                            u0.elapsed().as_millis(),
+                            err
+                        );
                     }
                 }
             });
@@ -270,6 +288,8 @@ pub fn run() {
             commands::clear_all_media,
             commands::update_inspiration,
             commands::download_video_from_url,
+            commands::set_video_download_paused,
+            commands::cancel_video_download,
             commands::add_inspirations_from_paths,
             commands::import_media_from_paths,
             commands::add_inspirations_from_files,

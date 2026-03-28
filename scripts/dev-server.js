@@ -34,6 +34,94 @@ const MIME = {
   ".txt": "text/plain; charset=utf-8"
 };
 
+/** Single-range parser for Range: bytes=… (required for <video> seek in Chromium/WebView). */
+function parseBytesRange(header, size) {
+  if (!header || !/^bytes=/i.test(header)) return null;
+  const part = header.split(",")[0].trim();
+  const m = /^bytes=(\d*)-(\d*)$/i.exec(part);
+  if (!m) return null;
+  let start = m[1] === "" ? null : Number(m[1]);
+  let end = m[2] === "" ? null : Number(m[2]);
+  if (start !== null && !Number.isFinite(start)) return null;
+  if (end !== null && !Number.isFinite(end)) return null;
+  if (start === null && end === null) return null;
+
+  if (start !== null && end !== null) {
+    if (start > end || start >= size) return null;
+    end = Math.min(end, size - 1);
+    return { start, end };
+  }
+  if (start !== null) {
+    if (start >= size) return null;
+    return { start, end: size - 1 };
+  }
+  const suffixLen = end;
+  if (suffixLen === null || suffixLen <= 0) return null;
+  if (suffixLen > size) return { start: 0, end: size - 1 };
+  return { start: size - suffixLen, end: size - 1 };
+}
+
+function sendVaultFileWithRange(req, res, filePath) {
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    const size = stat.size;
+    const contentType = MIME[path.extname(filePath)] || "application/octet-stream";
+    const range = req.headers.range;
+
+    if (req.method === "HEAD") {
+      res.writeHead(200, {
+        "Content-Length": size,
+        "Content-Type": contentType,
+        "Accept-Ranges": "bytes"
+      });
+      res.end();
+      return;
+    }
+
+    if (range) {
+      const rng = parseBytesRange(range, size);
+      if (!rng) {
+        res.writeHead(416, { "Content-Range": `bytes */${size}` });
+        res.end();
+        return;
+      }
+      const { start, end } = rng;
+      const chunkSize = end - start + 1;
+      res.writeHead(206, {
+        "Content-Range": `bytes ${start}-${end}/${size}`,
+        "Accept-Ranges": "bytes",
+        "Content-Length": chunkSize,
+        "Content-Type": contentType
+      });
+      const stream = fs.createReadStream(filePath, { start, end });
+      stream.pipe(res);
+      stream.on("error", () => {
+        try {
+          res.destroy();
+        } catch (_) {}
+      });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Length": size,
+      "Content-Type": contentType,
+      "Accept-Ranges": "bytes"
+    });
+    const stream = fs.createReadStream(filePath);
+    stream.pipe(res);
+    stream.on("error", () => {
+      try {
+        res.destroy();
+      } catch (_) {}
+    });
+  });
+}
+
 const server = http.createServer((req, res) => {
   const u = new URL(req.url || "/", "http://localhost");
   let p = u.pathname;
@@ -53,15 +141,7 @@ const server = http.createServer((req, res) => {
       res.end();
       return;
     }
-    fs.readFile(filePath, (err, data) => {
-      if (err) {
-        res.writeHead(404);
-        res.end();
-        return;
-      }
-      res.setHeader("Content-Type", MIME[path.extname(filePath)] || "application/octet-stream");
-      res.end(data);
-    });
+    sendVaultFileWithRange(req, res, filePath);
     return;
   }
 
