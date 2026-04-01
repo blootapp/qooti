@@ -98,7 +98,7 @@ jobs:
 
       # Ad-hoc signing only when no Apple .p12 is configured; otherwise it would replace real signatures.
       - name: Ad-hoc sign macOS app
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE == ''
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
         run: |
           APP_PATH=$(find src-tauri/target -name "Qooti.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -128,7 +128,7 @@ jobs:
           echo "Signing complete"
 
       - name: Ad-hoc sign macOS DMG
-        if: runner.os == 'macOS' && secrets.APPLE_CERTIFICATE == ''
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
         run: |
           DMG_PATH=$(find src-tauri/target -name "*.dmg" | head -n 1)
           if [ -z "$DMG_PATH" ]; then
