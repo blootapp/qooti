@@ -63,9 +63,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Base64 .p12 (e.g. openssl base64 -A -in Key.p12). Tauri infers signing identity; do not commit the key.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Qooti ${{ github.ref_name }}"
@@ -94,7 +91,7 @@ jobs:
 
       # Ad-hoc signing only when no Apple .p12 is configured; otherwise it would replace real signatures.
       - name: Ad-hoc sign macOS app
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
+        if: runner.os == 'macOS'
         run: |
           APP_PATH=$(find src-tauri/target -name "Qooti.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -124,7 +121,7 @@ jobs:
           echo "Signing complete"
 
       - name: Ad-hoc sign macOS DMG
-        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
+        if: runner.os == 'macOS'
         run: |
           DMG_PATH=$(find src-tauri/target -name "*.dmg" | head -n 1)
           if [ -z "$DMG_PATH" ]; then
