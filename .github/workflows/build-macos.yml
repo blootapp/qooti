@@ -24,6 +24,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
 
       - name: Download yt-dlp binary
         shell: bash
@@ -65,14 +67,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: npm run tauri build -- --bundles app,dmg --config src-tauri/tauri.macos.conf.json
+        run: npm run tauri build -- --bundles app,dmg --target universal-apple-darwin --config src-tauri/tauri.macos.conf.json
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v5
         with:
           name: macos-build
           path: |
-            src-tauri/target/release/bundle/macos/*.app
-            src-tauri/target/release/bundle/macos/*.app.tar.gz
-            src-tauri/target/release/bundle/macos/*.app.tar.gz.sig
-            src-tauri/target/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg

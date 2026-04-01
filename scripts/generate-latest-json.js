@@ -3,26 +3,44 @@
  * Run after: npm run tauri build (with TAURI_SIGNING_PRIVATE_KEY_PATH set)
  *
  * Usage:
- *   node scripts/generate-latest-json.js <release-base-url> [--merge path/to/latest.json]
+ *   node scripts/generate-latest-json.js <release-base-url> [--merge path/to/latest.json] [--macos-bundle-dir path/to/folder]
  *
- * On Windows: writes latest.json with windows-x86_64. Optionally --merge to add to existing.
- * On macOS: writes darwin-{arch} and darwin-{arch}-app (Tauri 2 updater tries -app first). Use --merge with Windows latest.json to combine.
+ * On Windows: reads NSIS .exe + .sig from target/release/bundle/nsis.
+ * Optional --macos-bundle-dir: folder containing Qooti_*_universal.app.tar.gz (or versioned .app.tar.gz) and .sig from macOS CI — merges darwin-* entries so one manifest covers Windows + macOS.
+ *
+ * On macOS: writes darwin-{arch} from local bundle paths (or use --merge with a Windows latest.json).
  *
  * Example (GitHub Releases):
  *   node scripts/generate-latest-json.js https://github.com/blootapp/qooti-releases/releases/download/v0.1.0
  *   node scripts/generate-latest-json.js https://github.com/blootapp/qooti-releases/releases/download/v0.1.0 --merge ./latest.json
+ *   node scripts/generate-latest-json.js https://github.com/blootapp/qooti-releases/releases/download/v0.1.1 --macos-bundle-dir ./release-assets/mac-v0.1.1
  */
 
 const fs = require("fs");
 const path = require("path");
 
-const args = process.argv.slice(2);
-const mergeIdx = args.indexOf("--merge");
-const releaseBaseUrl = mergeIdx >= 0 ? args[0] : args[0];
-const mergePath = mergeIdx >= 0 ? args[mergeIdx + 1] : null;
+const rawArgs = process.argv.slice(2);
+let mergePath = null;
+let macosBundleDir = null;
+const positionals = [];
+
+for (let i = 0; i < rawArgs.length; i++) {
+  const a = rawArgs[i];
+  if (a === "--merge" && rawArgs[i + 1]) {
+    mergePath = rawArgs[++i];
+  } else if (a === "--macos-bundle-dir" && rawArgs[i + 1]) {
+    macosBundleDir = rawArgs[++i];
+  } else {
+    positionals.push(a);
+  }
+}
+
+const releaseBaseUrl = positionals[0];
 
 if (!releaseBaseUrl) {
-  console.error("Usage: node scripts/generate-latest-json.js <release-base-url> [--merge path/to/latest.json]");
+  console.error(
+    "Usage: node scripts/generate-latest-json.js <release-base-url> [--merge path/to/latest.json] [--macos-bundle-dir path]"
+  );
   process.exit(1);
 }
 
@@ -79,6 +97,51 @@ function findExistingDir(candidates) {
   return null;
 }
 
+/** @param {string} macosDirAbs absolute path */
+function addDarwinPlatformsFromBundleDir(macosDirAbs, validatedBase) {
+  const abs = path.resolve(macosDirAbs);
+  if (!fs.existsSync(abs) || !fs.statSync(abs).isDirectory()) {
+    console.error("--macos-bundle-dir is missing or not a directory:", abs);
+    process.exit(1);
+  }
+  const files = fs.readdirSync(abs);
+  const tarGz = getVersionedBundleFile(files, version, ".app.tar.gz");
+  const sigFile = `${tarGz}.sig`;
+  const sigPath = path.join(abs, sigFile);
+  if (!fs.existsSync(sigPath)) {
+    console.error("macOS .sig not found:", sigPath);
+    process.exit(1);
+  }
+  const sigContent = fs.readFileSync(sigPath, "utf8").trim();
+  const platformUrl = new URL(tarGz, `${validatedBase}/`).toString();
+  const lower = `${tarGz} ${abs}`.toLowerCase();
+  const isUniversal = lower.includes("universal");
+
+  const addDarwin = (archSuffix) => {
+    const base = `darwin-${archSuffix}`;
+    const entry = { signature: sigContent, url: platformUrl };
+    platforms[base] = entry;
+    platforms[`${base}-app`] = { ...entry };
+  };
+
+  if (isUniversal) {
+    addDarwin("aarch64");
+    addDarwin("x86_64");
+  } else if (/aarch64|arm64/i.test(tarGz)) {
+    addDarwin("aarch64");
+  } else if (/x86_64|x64/i.test(tarGz)) {
+    addDarwin("x86_64");
+  } else {
+    console.error(
+      "Cannot infer macOS architecture. Use a universal .app.tar.gz (filename contains \"universal\") or aarch64/x86_64 in the name:",
+      tarGz
+    );
+    process.exit(1);
+  }
+
+  filesToUpload.push(tarGz, sigFile);
+}
+
 if (process.platform === "win32") {
   const nsisDir = path.join(root, "src-tauri", "target", "release", "bundle", "nsis");
   if (!fs.existsSync(nsisDir)) {
@@ -87,15 +150,22 @@ if (process.platform === "win32") {
   }
   const files = fs.readdirSync(nsisDir);
   const exeFile = getVersionedBundleFile(files, version, "-setup.exe");
-  const sigFile = exeFile ? exeFile + ".sig" : null;
+  const sigFile = exeFile ? `${exeFile}.sig` : null;
   if (!exeFile || !sigFile || !fs.existsSync(path.join(nsisDir, sigFile))) {
     console.error("Installer or .sig not found in", nsisDir);
     process.exit(1);
   }
   const sigContent = fs.readFileSync(path.join(nsisDir, sigFile), "utf8").trim();
-  platforms["windows-x86_64"] = { signature: sigContent, url: new URL(exeFile, `${validatedBaseUrl}/`).toString() };
+  platforms.windows-x86_64 = {
+    signature: sigContent,
+    url: new URL(exeFile, `${validatedBaseUrl}/`).toString(),
+  };
   outDir = nsisDir;
   filesToUpload = [exeFile, sigFile];
+
+  if (macosBundleDir) {
+    addDarwinPlatformsFromBundleDir(macosBundleDir, validatedBaseUrl);
+  }
 } else if (process.platform === "darwin") {
   const macosDir = findExistingDir([
     path.join(root, "src-tauri", "target", "universal-apple-darwin", "release", "bundle", "macos"),
@@ -109,8 +179,8 @@ if (process.platform === "win32") {
   }
   const files = fs.readdirSync(macosDir);
   const tarGz = getVersionedBundleFile(files, version, ".app.tar.gz");
-  const sigFile = tarGz ? tarGz + ".sig" : null;
-  if (!tarGz || !sigFile || !fs.existsSync(path.join(macosDir, sigFile))) {
+  const sigFile = `${tarGz}.sig`;
+  if (!tarGz || !fs.existsSync(path.join(macosDir, sigFile))) {
     console.error("macOS .app.tar.gz or .sig not found in", macosDir);
     process.exit(1);
   }
