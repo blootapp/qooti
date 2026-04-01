@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "qooti",
-  "version": "0.1.4",
+  "productName": "Qooti",
+  "version": "0.1.0",
   "identifier": "com.qooti.desktop",
   "build": {
     "frontendDist": "../src",
@@ -14,7 +14,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "qooti",
+        "title": "Qooti",
         "width": 1280,
         "height": 800,
         "minWidth": 980,
@@ -38,10 +38,15 @@
     "active": true,
     "createUpdaterArtifacts": true,
     "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Visual inspiration vault for creatives",
+    "longDescription": "Save images and videos from anywhere on the web. Organize your creative inspiration locally with Qooti.",
     "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
       "icons/icon.icns",
-      "../assets/icon.ico",
-      "../assets/icon.png"
+      "icons/icon.ico"
     ],
     "fileAssociations": [
       {

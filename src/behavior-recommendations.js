@@ -162,7 +162,7 @@ export function applyPersonalizedHomeOrder(items, profile, headSize) {
 }
 
 /**
- * @param {{ view?: string, query?: string, colorFilter?: object | null, selectedTagId?: string | null, settings?: object }} viewState
+ * @param {{ view?: string, query?: string, colorFilter?: object | null, selectedTagId?: string | null, sortByRecent?: boolean, settings?: object }} viewState
  */
 export function shouldPersonalizeHomeGrid(viewState) {
   const v = viewState || {};
@@ -171,6 +171,8 @@ export function shouldPersonalizeHomeGrid(viewState) {
   if (String(v.query || "").trim()) return false;
   if (v.colorFilter) return false;
   if (v.selectedTagId && String(v.selectedTagId).trim()) return false;
+  // "Recent" pill = strict API order (newest first), not affinity shuffle.
+  if (v.sortByRecent === true) return false;
   if (v.settings?.personalizeHomeFeed === "false") return false;
   return true;
 }

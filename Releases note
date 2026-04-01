@@ -1,1 +1,3 @@
 Releases for Qooti
+
+macOS beta: GitHub release pages include Spotlight / `mdutil` notes for ad-hoc signed builds. After renaming the app bundle to **Qooti.app**, use `mdls /Applications/Qooti.app` to verify metadata.

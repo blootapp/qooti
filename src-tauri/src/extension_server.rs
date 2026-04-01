@@ -5,7 +5,7 @@ use serde_json::Value;
 use std::collections::VecDeque;
 #[allow(unused_imports)]
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tiny_http::{Method, Response, Server, StatusCode};
@@ -59,6 +59,27 @@ fn respond_json(status: StatusCode, body: &Value) -> Response<std::io::Cursor<Ve
             tiny_http::Header::from_bytes(&b"Content-Type"[..], b"application/json").unwrap(),
         )
         .with_header(cors_header())
+}
+
+fn respond_binary(
+    status: StatusCode,
+    body: Vec<u8>,
+    content_type: &str,
+    filename: Option<&str>,
+) -> Response<std::io::Cursor<Vec<u8>>> {
+    let mut response = Response::from_data(body)
+        .with_status_code(status)
+        .with_header(
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
+        )
+        .with_header(cors_header());
+    if let Some(name) = filename {
+        let val = format!("attachment; filename=\"{}\"", name);
+        response = response.with_header(
+            tiny_http::Header::from_bytes(&b"Content-Disposition"[..], val.as_bytes()).unwrap(),
+        );
+    }
+    response
 }
 
 fn respond_401() -> Response<std::io::Cursor<Vec<u8>>> {
@@ -248,7 +269,12 @@ fn assign_latest_to_collection(conn: &rusqlite::Connection, payload: &Value) -> 
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     conn.execute(
-        "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, 0, ?)",
+        "DELETE FROM collection_items WHERE inspiration_id = ?",
+        rusqlite::params![&inspiration_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, 0, ?)",
         rusqlite::params![&collection_id, &inspiration_id, ts],
     )
     .map_err(|e| e.to_string())?;
@@ -270,7 +296,39 @@ fn assign_latest_to_collection(conn: &rusqlite::Connection, payload: &Value) -> 
     }))
 }
 
-pub fn spawn(db_path: std::path::PathBuf, queue: Arc<Mutex<VecDeque<Value>>>) {
+fn export_full_collection_pack(
+    conn: &rusqlite::Connection,
+    vault_root: &Path,
+    collection_id: &str,
+) -> Result<Vec<u8>, String> {
+    let pack_name: String = conn
+        .query_row(
+            "SELECT name FROM collections WHERE id = ? LIMIT 1",
+            [collection_id],
+            |r| r.get::<_, String>(0),
+        )
+        .map_err(|_| "Collection not found".to_string())?;
+    let tmp_path = std::env::temp_dir().join(format!(
+        "qooti-export-full-{}-{}.qooti",
+        collection_id,
+        uuid::Uuid::new_v4()
+    ));
+    crate::pack::export_collection(
+        conn,
+        vault_root,
+        collection_id,
+        &tmp_path,
+        None,
+        &pack_name,
+        None,
+        None::<fn(&str, u8)>,
+    )?;
+    let bytes = std::fs::read(&tmp_path).map_err(|e| format!("Failed reading exported pack: {}", e))?;
+    let _ = std::fs::remove_file(&tmp_path);
+    Ok(bytes)
+}
+
+pub fn spawn(db_path: std::path::PathBuf, vault_root: PathBuf, queue: Arc<Mutex<VecDeque<Value>>>) {
     thread::spawn(move || {
         let addr = format!("127.0.0.1:{}", PORT);
         let server = match Server::http(&addr) {
@@ -527,6 +585,41 @@ pub fn spawn(db_path: std::path::PathBuf, queue: Arc<Mutex<VecDeque<Value>>>) {
                                 req_start.elapsed().as_millis(),
                                 err
                             );
+                            let _ = request.respond(respond_400(&err));
+                        }
+                    }
+                }
+                (Method::Post, path)
+                    if path.starts_with("/qooti/generator/collections/")
+                        && path.ends_with("/export-full") =>
+                {
+                    let collection_id = path
+                        .trim_start_matches("/qooti/generator/collections/")
+                        .trim_end_matches("/export-full")
+                        .trim_matches('/')
+                        .to_string();
+                    if collection_id.is_empty() {
+                        let _ = request.respond(respond_400("collection_id is required"));
+                        continue;
+                    }
+                    let conn = match rusqlite::Connection::open(&db_path) {
+                        Ok(c) => c,
+                        Err(_) => {
+                            let _ = request.respond(respond_400("Could not open database"));
+                            continue;
+                        }
+                    };
+                    match export_full_collection_pack(&conn, &vault_root, &collection_id) {
+                        Ok(bytes) => {
+                            let filename = format!("{}.qooti", collection_id);
+                            let _ = request.respond(respond_binary(
+                                StatusCode(200),
+                                bytes,
+                                "application/octet-stream",
+                                Some(&filename),
+                            ));
+                        }
+                        Err(err) => {
                             let _ = request.respond(respond_400(&err));
                         }
                     }

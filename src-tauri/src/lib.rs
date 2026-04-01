@@ -99,7 +99,7 @@ pub fn run() {
             let extension_queue = extension_server::ExtensionQueue(Arc::new(
                 std::sync::Mutex::new(std::collections::VecDeque::new()),
             ));
-            extension_server::spawn(vault.db_path.clone(), extension_queue.0.clone());
+            extension_server::spawn(vault.db_path.clone(), vault.root.clone(), extension_queue.0.clone());
             app.manage(extension_queue);
 
             let notifications_enabled = read_pref_bool(&db, PREF_TRAY_NOTIFICATIONS_ENABLED, true);
@@ -245,6 +245,8 @@ pub fn run() {
             commands::select_collection_pack_file,
             commands::inspect_collection_pack,
             commands::import_collection_pack,
+            commands::fetch_free_collections_index,
+            commands::download_and_import_collection,
             commands::select_telegram_export_folder,
             commands::inspect_telegram_export,
             commands::import_telegram_export,

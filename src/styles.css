@@ -197,6 +197,23 @@ body {
   line-height: 1.4;
 }
 
+/* Disable text selection across app UI */
+body,
+body * {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Keep typing/edit interactions normal */
+input,
+textarea,
+select,
+[contenteditable="true"],
+[contenteditable="plaintext-only"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .hidden {
   display: none !important;
 }
@@ -2573,67 +2590,119 @@ html[data-theme="light"] .topbar__divider {
   margin: 6px 12px;
 }
 
+.feedback-modal__title {
+  margin: 0 0 14px;
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.feedback-modal__options {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--modal-divider);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
 .feedback-modal__textarea {
   width: 100%;
-  min-height: 132px;
-  resize: vertical;
-  margin-top: 10px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--field-border);
+  min-height: 120px;
+  margin-top: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--modal-border);
   background: var(--field-bg);
   color: var(--text);
   font: inherit;
+  line-height: 1.5;
+  resize: none;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .feedback-modal__textarea:focus {
   outline: none;
-  border-color: var(--border);
+  border-color: rgba(231, 234, 240, 0.22);
+  box-shadow: 0 0 0 3px rgba(231, 234, 240, 0.06);
 }
 
 .feedback-modal__screenshot-option {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
+  align-items: flex-start;
+  gap: 11px;
+  margin-top: 0;
   cursor: pointer;
-  font-size: 14px;
-  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted2);
+}
+
+.feedback-modal__option-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--muted2);
 }
 
 .feedback-modal__screenshot-checkbox {
-  width: 18px;
-  height: 18px;
-  accent-color: var(--primary);
-  cursor: pointer;
+  width: 17px;
+  height: 17px;
+  margin: 1px 0 0;
   flex-shrink: 0;
+  cursor: pointer;
+  accent-color: var(--text);
+  border-radius: 4px;
 }
 
 .feedback-modal__attach-row {
-  margin-top: 12px;
+  margin-top: 2px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .feedback-modal__file-input {
   display: none;
 }
 
-.feedback-modal__attach-btn {
-  height: 34px;
+.feedback-modal__attach-link {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: rgba(231, 234, 240, 0.28);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  border: none;
+  background: none;
+  padding: 0;
+  font-family: inherit;
+}
+
+.feedback-modal__attach-link:hover {
+  text-decoration-color: var(--accent);
 }
 
 .feedback-modal__file-name {
   font-size: 12px;
   color: var(--muted2);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .feedback-modal__error {
-  margin-top: 10px;
+  margin-top: 12px;
   color: var(--feedback-error);
   font-size: 12px;
+  line-height: 1.4;
 }
 
 /* Floating feedback button — bottom-right, always on top */
@@ -6206,11 +6275,16 @@ html[data-theme="light"] .app--collections-open {
   background: var(--glass-inset);
 }
 
-.collections-card__cell img {
+.collections-card__cell img,
+.collections-card__cell video {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.collections-card__cell video {
+  pointer-events: none;
 }
 
 .collections-card__glyph {
@@ -6630,6 +6704,11 @@ html[data-theme="light"] .app--collections-open {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.history-row__thumb video.history-row__img {
+  display: block;
+  pointer-events: none;
 }
 
 .history-row__placeholder {
@@ -8015,6 +8094,68 @@ html[data-theme="light"] .survey-library-card__thumb-wrap {
   transform: scale(1);
 }
 
+.survey-library-card--skeleton {
+  pointer-events: none;
+}
+
+.survey-library-card__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.skeleton-preview,
+.skeleton-line {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  animation: surveyShimmer 1.4s ease-in-out infinite;
+}
+
+.skeleton-preview {
+  width: 108px;
+  height: 108px;
+  border-radius: 14px;
+  flex-shrink: 0;
+}
+
+.skeleton-line {
+  height: 12px;
+}
+
+.skeleton-line--long {
+  width: 70%;
+  margin-top: 8px;
+}
+
+.skeleton-line--short {
+  width: 40%;
+  margin-top: 12px;
+}
+
+@keyframes surveyShimmer {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.collections-state-msg {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 18px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.collections-state-msg p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
 .survey-library__bar {
   flex-shrink: 0;
   border-top: 1px solid var(--border);
@@ -8087,6 +8228,110 @@ html:not([data-theme="light"]) .survey-library__bar {
   .survey-library__cta {
     width: 100%;
   }
+}
+
+/* Survey visual refresh (layout + readability only) */
+.survey-view__inner {
+  width: min(100%, 680px);
+  padding: 42px clamp(18px, 4vw, 28px) 30px;
+}
+
+.survey-view__card {
+  border-radius: 18px;
+  border-color: var(--border2);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+.survey-view__body {
+  gap: 14px;
+  padding: clamp(22px, 4vw, 30px) clamp(20px, 4vw, 28px) 10px;
+}
+
+.survey-view__question {
+  font-size: clamp(1.45rem, 3.2vw, 1.9rem);
+  line-height: 1.2;
+}
+
+.survey-view__hint {
+  font-size: 14px;
+  color: var(--muted2);
+}
+
+.survey-view__options--stack {
+  gap: 12px;
+  max-height: min(48vh, 460px);
+}
+
+.survey-view__option {
+  min-height: 56px;
+  border-radius: 12px;
+}
+
+/* Keep the circular next button, but anchor it inside survey card footer */
+.survey-view__step .survey-view__footer {
+  padding-right: 92px;
+  padding-bottom: 22px;
+}
+
+.survey-view__step .survey-view__next {
+  position: absolute;
+  right: 24px;
+  bottom: 12px;
+}
+
+@media (min-width: 560px) {
+  .survey-view__step .survey-view__next {
+    right: 24px;
+  }
+}
+
+.survey-library__header {
+  padding: 24px clamp(20px, 4vw, 56px) 18px;
+}
+
+.survey-library__subtitle {
+  color: var(--muted2);
+  max-width: 48rem;
+}
+
+.survey-library__grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: clamp(16px, 2.2vw, 22px);
+  max-width: 1320px;
+}
+
+.survey-library-card__label {
+  border-radius: 16px;
+}
+
+.survey-library-card__top {
+  padding: 16px;
+}
+
+.survey-library-card__thumb-wrap {
+  width: 80px;
+  height: 80px;
+}
+
+.survey-library-card__title {
+  font-size: 15px;
+}
+
+.survey-library-card__desc {
+  font-size: 12px;
+  color: var(--muted2);
+}
+
+.survey-library-card__price {
+  font-size: 18px;
+}
+
+.survey-library-card__bottom {
+  padding: 12px 16px 16px;
+}
+
+.survey-library-card__total-value {
+  font-size: 18px;
 }
 
 
@@ -9007,16 +9252,17 @@ select.settings-field__control option {
   z-index: 10;
 }
 
+/* On macOS we use native window chrome (traffic lights + title bar). */
 body.platform-macos .title-bar {
   display: none;
 }
 
 body.platform-macos .window-controls {
-  margin-right: 10px;
+  display: none;
 }
 
 body.platform-macos .title-bar__brand {
-  margin-left: 6px;
+  margin-left: 0;
 }
 
 body.platform-macos .title-bar__spacer {
@@ -9478,6 +9724,52 @@ body.platform-macos .title-bar__spacer {
   background: var(--accent);
   border-color: rgba(255, 255, 255, 0.15);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.34);
+}
+
+/* Send feedback — narrower sheet, minimal footer */
+.app-modal--feedback .app-modal__dialog.app-modal__dialog--feedback {
+  width: min(428px, 100%);
+}
+
+.app-modal--feedback .app-modal__body {
+  padding: 26px 26px 20px;
+}
+
+.app-modal--feedback .app-modal__footer {
+  padding: 14px 22px 22px;
+  gap: 12px;
+}
+
+.app-modal--feedback .app-modal__footer .app-modal__cancel {
+  flex: 0 0 auto;
+  min-width: auto;
+  padding: 0 14px;
+  height: 40px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted2);
+  font-weight: 500;
+  box-shadow: none;
+}
+
+.app-modal--feedback .app-modal__footer .app-modal__cancel:hover:not(:disabled) {
+  background: var(--panel2);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.app-modal--feedback .app-modal__footer .app-modal__submit {
+  flex: 1;
+  border-radius: 12px;
+}
+
+html[data-theme="light"] .feedback-modal__textarea:focus {
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.05);
+}
+
+html[data-theme="light"] .feedback-modal__attach-link {
+  text-decoration-color: rgba(0, 0, 0, 0.22);
 }
 
 /* Danger confirm */

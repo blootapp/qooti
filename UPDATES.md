@@ -93,9 +93,9 @@ Source code never needs to be uploaded anywhere.
    npm run tauri build
    ```
 
-4. **Artifacts** are in `src-tauri/target/release/bundle/macos/`:
-   - `qooti.app.tar.gz`
-   - `qooti.app.tar.gz.sig`
+4. **Artifacts** are in `src-tauri/target/release/bundle/macos/` (names follow `productName` in `tauri.conf.json`):
+   - `Qooti.app.tar.gz`
+   - `Qooti.app.tar.gz.sig`
 
 5. **Generate or merge into latest.json**:
    - First time (macOS only):  

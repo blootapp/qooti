@@ -6,7 +6,7 @@
  *   node scripts/generate-latest-json.js <release-base-url> [--merge path/to/latest.json]
  *
  * On Windows: writes latest.json with windows-x86_64. Optionally --merge to add to existing.
- * On macOS: writes darwin-x86_64 or darwin-aarch64. Use --merge with Windows latest.json to combine.
+ * On macOS: writes darwin-{arch} and darwin-{arch}-app (Tauri 2 updater tries -app first). Use --merge with Windows latest.json to combine.
  *
  * Example (GitHub Releases):
  *   node scripts/generate-latest-json.js https://github.com/blootapp/qooti-releases/releases/download/v0.1.0
@@ -117,16 +117,22 @@ if (process.platform === "win32") {
   const sigContent = fs.readFileSync(path.join(macosDir, sigFile), "utf8").trim();
   const bundlePath = macosDir.toLowerCase().replace(/\\/g, "/");
   const platformUrl = new URL(tarGz, `${validatedBaseUrl}/`).toString();
+  const addDarwin = (archSuffix) => {
+    const base = `darwin-${archSuffix}`;
+    const entry = { signature: sigContent, url: platformUrl };
+    platforms[base] = entry;
+    platforms[`${base}-app`] = { ...entry };
+  };
   if (bundlePath.includes("/universal-apple-darwin/")) {
-    platforms["darwin-aarch64"] = { signature: sigContent, url: platformUrl };
-    platforms["darwin-x86_64"] = { signature: sigContent, url: platformUrl };
+    addDarwin("aarch64");
+    addDarwin("x86_64");
   } else if (bundlePath.includes("/aarch64-apple-darwin/")) {
-    platforms["darwin-aarch64"] = { signature: sigContent, url: platformUrl };
+    addDarwin("aarch64");
   } else if (bundlePath.includes("/x86_64-apple-darwin/")) {
-    platforms["darwin-x86_64"] = { signature: sigContent, url: platformUrl };
+    addDarwin("x86_64");
   } else {
     const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-    platforms["darwin-" + arch] = { signature: sigContent, url: platformUrl };
+    addDarwin(arch);
   }
   outDir = macosDir;
   filesToUpload = [tarGz, sigFile];

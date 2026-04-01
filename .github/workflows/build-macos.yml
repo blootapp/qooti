@@ -1,5 +1,5 @@
 # Build Tauri app for macOS on every push. No physical Mac required.
-# Add repo secrets TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD for signed updater artifacts.
+# Secrets: TAURI_SIGNING_* (updater .sig), optional APPLE_CERTIFICATE (base64 .p12) + APPLE_CERTIFICATE_PASSWORD (code sign).
 name: Build macOS
 on:
   push:
@@ -42,7 +42,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- --bundles app,dmg
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: npm run tauri build -- --bundles app,dmg --config src-tauri/tauri.macos.conf.json
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v5

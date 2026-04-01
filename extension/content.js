@@ -569,6 +569,8 @@
       ".qooti-picker-row{display:flex;align-items:center;justify-content:space-between;padding:10px 11px;border-radius:12px;cursor:pointer;transition:background .14s ease,transform .12s ease;margin:2px 0;border:none;background:transparent;color:inherit;width:100%;text-align:left;}",
       ".qooti-picker-row:hover{background:rgba(255,255,255,.08);}",
       ".qooti-picker-row:active{transform:scale(.99);}",
+      ".qooti-picker-row.qooti-picker-row--loading{opacity:.72;pointer-events:none;}",
+      ".qooti-picker-row.qooti-picker-row--loading .qooti-picker-row-count{opacity:.5;}",
       ".qooti-picker-row.done{background:rgba(50,215,75,.1);animation:qooti-picker-row-pop .22s cubic-bezier(.34,1.56,.64,1);}",
       "@keyframes qooti-picker-row-pop{0%{transform:scale(1)}50%{transform:scale(1.025)}100%{transform:scale(1)}}",
       ".qooti-picker-row-left{display:flex;align-items:center;gap:10px;min-width:0;}",
@@ -811,7 +813,11 @@
       btn.querySelector(".qooti-picker-row-count").textContent = String(c.item_count || 0);
       btn.querySelector(".qooti-picker-row-pip").style.background = colorForCollection(c.id, rows.indexOf(c));
       btn.addEventListener("click", async function () {
-        if (state.closing) return;
+        if (state.closing || state.assigning) return;
+        state.assigning = true;
+        state.inlineError.textContent = "";
+        state.listWrap.style.pointerEvents = "none";
+        btn.classList.add("qooti-picker-row--loading");
         try {
           await assignToCollection({
             url: state.url,
@@ -819,6 +825,7 @@
             requestId: state.requestId,
             pageUrl: state.pageUrl,
           }, 10);
+          btn.classList.remove("qooti-picker-row--loading");
           btn.classList.add("done");
           state.el.classList.add("qooti-picker--pulse");
           state.toast.textContent = pickerText(lang, "success") + ": " + c.name;
@@ -827,6 +834,9 @@
             dismissCollectionPicker("assigned");
           }, 1500);
         } catch (err) {
+          state.assigning = false;
+          state.listWrap.style.pointerEvents = "";
+          btn.classList.remove("qooti-picker-row--loading");
           state.inlineError.textContent = String(err && err.message ? err.message : "assign_failed");
         }
       });
@@ -909,6 +919,7 @@
       inlineError: el.querySelector(".qooti-picker-inline-error"),
       toast: el.querySelector(".qooti-picker-toast"),
       ignoreNextFocusPause: true,
+      assigning: false,
     };
     activeCollectionPicker = state;
 

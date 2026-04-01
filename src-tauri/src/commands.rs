@@ -121,6 +121,29 @@ pub struct InspirationRow {
     pub palette: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FreeCollection {
+    pub id: String,
+    pub name: String,
+    pub name_uz: Option<String>,
+    pub item_count: u32,
+    pub file_size_mb: f32,
+    pub download_url: String,
+    pub meta_url: String,
+    pub preview_urls: Vec<String>,
+    pub role_tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct CollectionsIndex {
+    pub version: String,
+    pub updated_at: String,
+    pub free: Vec<FreeCollection>,
+}
+
+const COLLECTIONS_INDEX_URL: &str =
+    "https://raw.githubusercontent.com/blootapp/qooti-collections/main/index.json";
+
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NotificationRow {
     pub id: String,
@@ -1171,6 +1194,26 @@ fn sync_unsorted_membership(conn: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+fn move_inspiration_to_collection(
+    conn: &Connection,
+    inspiration_id: &str,
+    collection_id: &str,
+    position: Option<i32>,
+    ts: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM collection_items WHERE inspiration_id = ?",
+        rusqlite::params![inspiration_id],
+    )
+    .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
+        rusqlite::params![collection_id, inspiration_id, position, ts],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[derive(Serialize)]
 pub struct CollectionRow {
     pub id: String,
@@ -1372,22 +1415,26 @@ pub fn add_to_collection(
 
     let conn = db.conn();
     ensure_default_unsorted_collection(&conn)?;
+    let mut touched_prev_collection_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (pos, id) in inspiration_ids.iter().enumerate() {
-        let _ = conn.execute(
-            "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
-            rusqlite::params![collection_id, id, pos as i32, ts],
-        );
-    }
-    if collection_id != DEFAULT_UNSORTED_COLLECTION_ID {
-        for id in &inspiration_ids {
-            let _ = conn.execute(
-                "DELETE FROM collection_items WHERE collection_id = ? AND inspiration_id = ?",
-                rusqlite::params![DEFAULT_UNSORTED_COLLECTION_ID, id],
-            );
+        let mut stmt = conn
+            .prepare("SELECT collection_id FROM collection_items WHERE inspiration_id = ?")
+            .map_err(|e| e.to_string())?;
+        let prev_ids = stmt
+            .query_map([id], |r| r.get::<_, String>(0))
+            .map_err(|e| e.to_string())?;
+        for row in prev_ids {
+            let cid = row.map_err(|e| e.to_string())?;
+            if cid != collection_id {
+                touched_prev_collection_ids.insert(cid);
+            }
         }
+        move_inspiration_to_collection(&conn, id, &collection_id, Some(pos as i32), ts)?;
+    }
+    for cid in touched_prev_collection_ids {
         let _ = conn.execute(
             "UPDATE collections SET updated_at = ? WHERE id = ?",
-            rusqlite::params![ts, DEFAULT_UNSORTED_COLLECTION_ID],
+            rusqlite::params![ts, cid],
         );
     }
     conn.execute(
@@ -1634,6 +1681,220 @@ pub async fn import_collection_pack(
 }
 
 #[tauri::command]
+pub async fn fetch_free_collections_index() -> Result<CollectionsIndex, String> {
+    cmd_log!("fetch_free_collections_index");
+    let start = std::time::Instant::now();
+    info!("[collections] fetching index | url={}", COLLECTIONS_INDEX_URL);
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(COLLECTIONS_INDEX_URL)
+        .send()
+        .await
+        .map_err(|e| {
+            error!("[collections] fetch failed | error={}", e);
+            "Internetga ulanib bo'lmadi".to_string()
+        })?;
+
+    if !response.status().is_success() {
+        error!("[collections] bad status | status={}", response.status());
+        return Err(format!("Server xatosi: {}", response.status()));
+    }
+
+    let index: CollectionsIndex = response.json().await.map_err(|e| {
+        error!("[collections] parse failed | error={}", e);
+        "Ma'lumotlarni o'qib bo'lmadi".to_string()
+    })?;
+
+    info!(
+        "[collections] loaded | count={} | duration={}ms",
+        index.free.len(),
+        start.elapsed().as_millis()
+    );
+
+    Ok(index)
+}
+
+#[tauri::command]
+pub async fn download_and_import_collection(
+    app: AppHandle,
+    db: State<'_, Arc<Db>>,
+    vault: State<'_, Arc<VaultPaths>>,
+    collection_id: String,
+    download_url: String,
+) -> Result<serde_json::Value, String> {
+    cmd_log!("download_and_import_collection");
+    info!(
+        "[download] command called | id={} | url={}",
+        collection_id, download_url
+    );
+    info!("[download] step=validate_inputs | id={}", collection_id);
+    if download_url.trim().is_empty() {
+        error!("[download] empty download_url | id={}", collection_id);
+        return Err("download_url bo'sh".to_string());
+    }
+    if !download_url.starts_with("https://") {
+        error!("[download] invalid url | id={} | url={}", collection_id, download_url);
+        return Err(format!("Noto'g'ri URL: {}", download_url));
+    }
+    let start = std::time::Instant::now();
+    let _ = app.emit(
+        "collection_progress",
+        serde_json::json!({ "id": collection_id, "status": "downloading", "pct": 0 }),
+    );
+
+    info!("[download] step=build_http_client");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(300))
+        .user_agent("qooti-desktop")
+        .build()
+        .map_err(|e| {
+            error!("[download] client build failed | id={} | error={}", collection_id, e);
+            format!("HTTP client xatosi: {}", e)
+        })?;
+
+    info!("[download] step=send_get | id={} | url={}", collection_id, download_url);
+    let response = client
+        .get(download_url.clone())
+        .send()
+        .await
+        .map_err(|e| {
+            error!(
+                "[download] request failed | id={} | url={} | error={}",
+                collection_id, download_url, e
+            );
+            format!("Yuklab bo'lmadi: {}", e)
+        })?;
+    let status = response.status();
+    info!("[download] response status | id={} | status={}", collection_id, status);
+    if !status.is_success() {
+        error!(
+            "[download] bad status | id={} | status={} | url={}",
+            collection_id,
+            status,
+            download_url
+        );
+        return Err(format!("Server xatosi: {}", status));
+    }
+    let content_length = response.content_length().unwrap_or(0);
+    info!(
+        "[download] content_length | id={} | bytes={}",
+        collection_id, content_length
+    );
+
+    let _ = app.emit(
+        "collection_progress",
+        serde_json::json!({ "id": collection_id, "status": "downloading", "pct": 30 }),
+    );
+    info!("[download] reading bytes... | id={}", collection_id);
+    let bytes_vec: Vec<u8> = response
+        .bytes()
+        .await
+        .map_err(|e| {
+            error!("[download] bytes read failed | id={} | error={}", collection_id, e);
+            format!("Baytlarni o'qishda xatolik: {}", e)
+        })?
+        .to_vec();
+    info!(
+        "[download] bytes received | id={} | size={}",
+        collection_id,
+        bytes_vec.len()
+    );
+    if bytes_vec.is_empty() {
+        error!("[download] empty response body | id={} | url={}", collection_id, download_url);
+        return Err("Bo'sh fayl yuklandi".to_string());
+    }
+
+    // Real .qooti files are AES-GCM encrypted blobs that always start with this magic (see pack.rs).
+    const QOOTI_PACK_MAGIC: &[u8; 8] = b"QOOTIPK1";
+    let magic_ok = bytes_vec.len() >= QOOTI_PACK_MAGIC.len()
+        && bytes_vec[..QOOTI_PACK_MAGIC.len()] == QOOTI_PACK_MAGIC[..];
+    if !magic_ok {
+        let head = bytes_vec.len().min(24);
+        let preview: String = bytes_vec[..head]
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join(" ");
+        error!(
+            "[download] body is not an encrypted Qooti pack | id={} | size={} | first_bytes_hex={}",
+            collection_id,
+            bytes_vec.len(),
+            preview
+        );
+        let looks_like_json = bytes_vec
+            .first()
+            .is_some_and(|c| *c == b'{') || bytes_vec.starts_with(b"\xef\xbb\xbf{");
+        let msg = if looks_like_json {
+            "Yuklangan fayl haqiqiy shifrlangan .qooti emas (JSON ko'rinadi). GitHub Releasesdagi asset hali eski generator bilan yuklangan — Collection Generator'ni yangilab qayta chiqaring va relizdagi .qooti faylni almashtiring."
+        } else {
+            "Yuklangan fayl Qooti .qooti formatida emas (boshida QOOTIPK1 bo'lishi kerak). URL yoki reliz faylini tekshiring."
+        };
+        return Err(msg.to_string());
+    }
+
+    let _ = app.emit(
+        "collection_progress",
+        serde_json::json!({ "id": collection_id, "status": "downloading", "pct": 90 }),
+    );
+
+    let _ = app.emit(
+        "collection_progress",
+        serde_json::json!({ "id": collection_id, "status": "importing", "pct": 90 }),
+    );
+
+    let downloaded_len = bytes_vec.len();
+    let db_arc = db.inner().clone();
+    let vault_arc = vault.inner().clone();
+    let collection_id_for_tmp = collection_id.clone();
+    let import_result = tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        info!(
+            "[download] starting import | id={} | bytes={}",
+            collection_id_for_tmp,
+            bytes_vec.len()
+        );
+        let tmp_name = format!("qooti-onboarding-{}-{}.qooti", collection_id_for_tmp, Uuid::new_v4());
+        let tmp_path = std::env::temp_dir().join(tmp_name);
+        fs::write(&tmp_path, &bytes_vec).map_err(|e| format!("Temp write failed: {}", e))?;
+        let conn = db_arc.conn();
+        let (cid, cname, imported, errors) = crate::pack::import_pack(&conn, &vault_arc.root, &tmp_path)?;
+        let _ = fs::remove_file(&tmp_path);
+        info!("[import] complete | id={} | imported={}", cid, imported);
+        Ok(serde_json::json!({
+            "collectionId": cid,
+            "collectionName": collection_display_name(&cname),
+            "imported": imported,
+            "errors": errors
+        }))
+    })
+    .await
+    .map_err(|e| {
+        error!("[import] join failed | id={} | error={}", collection_id, e);
+        e.to_string()
+    })?
+    .map_err(|e| {
+        error!("[import] failed | id={} | error={}", collection_id, e);
+        format!("Import xatosi: {}", e)
+    })?;
+
+    let _ = app.emit(
+        "collection_progress",
+        serde_json::json!({ "id": collection_id, "status": "complete", "pct": 100 }),
+    );
+    info!(
+        "[download] all done | id={} | bytes={} | duration={}ms",
+        collection_id,
+        downloaded_len,
+        start.elapsed().as_millis()
+    );
+    Ok(import_result)
+}
+
+#[tauri::command]
 pub async fn select_telegram_export_folder(app: AppHandle) -> Result<Option<String>, String> {
     cmd_log!("select_telegram_export_folder");
     let path = app
@@ -1787,9 +2048,12 @@ pub async fn import_telegram_export(
             let existing_id = existing_by_url.or(existing_by_identity).or(existing_by_hash);
             if let Some(existing_inspiration_id) = existing_id {
                 if let Some(collection_id) = collection_id_opt.as_ref() {
-                    let _ = tx.execute(
-                        "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
-                        rusqlite::params![collection_id, existing_inspiration_id, current as i32, ts_now],
+                    let _ = move_inspiration_to_collection(
+                        &tx,
+                        &existing_inspiration_id,
+                        collection_id,
+                        Some(current as i32),
+                        ts_now,
                     );
                 }
                 duplicates += 1;
@@ -1858,9 +2122,12 @@ pub async fn import_telegram_export(
             );
 
             if let Some(collection_id) = collection_id_opt.as_ref() {
-                let _ = tx.execute(
-                    "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
-                    rusqlite::params![collection_id, &new_id, current as i32, ts_now],
+                let _ = move_inspiration_to_collection(
+                    &tx,
+                    &new_id,
+                    collection_id,
+                    Some(current as i32),
+                    ts_now,
                 );
             }
             imported += 1;
@@ -2212,9 +2479,12 @@ pub async fn import_notion_export_zip(
                 )
                 .map_err(|e| e.to_string())?;
                 for (pos, row) in added.iter().enumerate() {
-                    let _ = conn.execute(
-                        "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
-                        rusqlite::params![&cid, &row.id, pos as i32, ts],
+                    let _ = move_inspiration_to_collection(
+                        &conn,
+                        &row.id,
+                        &cid,
+                        Some(pos as i32),
+                        ts,
                     );
                 }
                 collection_id = Some(cid);
@@ -5064,6 +5334,79 @@ pub fn update_inspiration(
     Ok(row)
 }
 
+/// ffprobe on PATH, `QOOTI_FFPROBE_PATH`, or common Windows install dirs (optional; no bundle).
+fn resolve_ffprobe_path() -> Option<PathBuf> {
+    if let Ok(custom) = env::var("QOOTI_FFPROBE_PATH") {
+        let p = PathBuf::from(custom.trim());
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let try_names: &[&str] = if cfg!(target_os = "windows") {
+        &["ffprobe.exe", "ffprobe"]
+    } else {
+        &["ffprobe"]
+    };
+    for name in try_names {
+        let mut cmd = Command::new(name);
+        suppress_console_window(&mut cmd);
+        if cmd
+            .arg("-version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return Some(PathBuf::from(name));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        for p in [
+            PathBuf::from(r"C:\ffmpeg\bin\ffprobe.exe"),
+            PathBuf::from(r"C:\Program Files\ffmpeg\bin\ffprobe.exe"),
+            PathBuf::from(r"C:\Program Files (x86)\ffmpeg\bin\ffprobe.exe"),
+        ] {
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+fn probe_video_aspect_ratio(path: &Path) -> Option<f64> {
+    let ffprobe = resolve_ffprobe_path()?;
+    let mut cmd = Command::new(&ffprobe);
+    suppress_console_window(&mut cmd);
+    cmd.stdin(Stdio::null());
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "json",
+    ]);
+    cmd.arg(path);
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let stream = v.get("streams")?.as_array()?.first()?;
+    let w = stream.get("width")?.as_f64()?;
+    let h = stream.get("height")?.as_f64()?;
+    if h <= 0.0 {
+        return None;
+    }
+    Some(w / h)
+}
+
 fn get_media_aspect_ratio(path: &Path, media_type: &str) -> Option<f64> {
     if media_type == "image" || media_type == "gif" {
         if let Ok(img) = image::open(path) {
@@ -5074,8 +5417,7 @@ fn get_media_aspect_ratio(path: &Path, media_type: &str) -> Option<f64> {
         }
     }
     if media_type == "video" {
-        // Will be filled when we have ffprobe
-        return None;
+        return probe_video_aspect_ratio(path);
     }
     None
 }

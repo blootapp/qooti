@@ -256,6 +256,8 @@ const state = {
 
 const GRID_INITIAL_LIMIT = 56;
 const GRID_LOAD_MORE_LIMIT = 56;
+/** Matches SQLite clamp in list_inspirations — used to load an entire collection in pages. */
+const LIST_INSPIRATIONS_MAX_LIMIT = 500;
 /** Server clamps list_inspirations limit to 500; use max pages for palette backfill. */
 const PALETTE_BACKFILL_PAGE_SIZE = 500;
 let collectionsPageRows = [];
@@ -2273,18 +2275,14 @@ const SURVEY_QUESTIONS = [
   },
 ];
 
-const RECOMMENDED_COLLECTIONS_BY_ROLE = {
-  "Motion Design": ["After Effects references", "Kinetic Typography", "Motion UI"],
-  "Video Editing": ["Cinematic frames", "Editing transitions", "Color grading"],
-  "Graphic Design": ["Poster design", "Typography inspiration", "Layout design"],
-  "UI / UX Design": ["UI components", "Mobile apps", "Dashboard designs"],
-  Photography: ["Cinematic photography", "Lighting setups", "Composition"],
-  "Other Creative Work": ["General design inspiration"],
+const SURVEY_ROLE_TO_TAGS = {
+  "Motion Design": ["motion_designer", "motion_design"],
+  "Video Editing": ["video_editor", "video_editing", "editor"],
+  "Graphic Design": ["graphic_designer", "graphic_design", "designer"],
+  "UI / UX Design": ["ui_ux_designer", "ui_ux", "uiux", "ui_designer"],
+  Photography: ["photographer", "photography"],
+  "Other Creative Work": [],
 };
-
-const ALL_ONBOARDING_COLLECTIONS = Array.from(
-  new Set(Object.values(RECOMMENDED_COLLECTIONS_BY_ROLE).flat())
-);
 
 /** Option label → SVG for “How did you discover Qooti?” (single-select only). */
 const SURVEY_DISCOVERY_BRAND_ICONS = {
@@ -2343,6 +2341,208 @@ function showSurveyView() {
       creative_level: "",
     };
     let step = 0;
+    let allCollections = [];
+
+    const roleTagsFor = (role) => SURVEY_ROLE_TO_TAGS[role] || [];
+    const isRecommendedForRole = (collection, role) => {
+      const tags = roleTagsFor(role);
+      if (!tags.length) return false;
+      const colTags = Array.isArray(collection?.role_tags)
+        ? collection.role_tags.map((x) => String(x || "").trim().toLowerCase())
+        : [];
+      return tags.some((tag) => colTags.includes(String(tag).toLowerCase()));
+    };
+    const localizedCollectionName = (collection, langNow) =>
+      langNow === "uz" && collection?.name_uz ? collection.name_uz : collection?.name || "";
+
+    const showCollectionsLoading = () => {
+      recommendedList.innerHTML = Array(6)
+        .fill(
+          `<article class="survey-library-card survey-library-card--skeleton" role="listitem">
+            <div class="survey-library-card__label">
+              <div class="survey-library-card__top">
+                <div class="skeleton-preview"></div>
+                <div class="survey-library-card__main">
+                  <div class="skeleton-line skeleton-line--long"></div>
+                  <div class="skeleton-line skeleton-line--short"></div>
+                </div>
+              </div>
+            </div>
+          </article>`
+        )
+        .join("");
+    };
+    const showCollectionsOffline = () => {
+      recommendedList.innerHTML = `
+        <div class="collections-state-msg">
+          <p>Kolleksiyalarni yuklash uchun internet kerak</p>
+          <button type="button" class="btn btn--secondary" id="surveyCollectionsRetryBtn">Qayta urinish</button>
+        </div>
+      `;
+      const retry = $("#surveyCollectionsRetryBtn");
+      if (retry) retry.onclick = () => initCollectionsScreen();
+    };
+    const showCollectionsEmpty = () => {
+      recommendedList.innerHTML = `
+        <div class="collections-state-msg">
+          <p>Hozircha kolleksiyalar mavjud emas</p>
+        </div>
+      `;
+    };
+
+    const formatCollectionSize = (sizeMb) => {
+      const n = Number(sizeMb || 0);
+      if (!Number.isFinite(n) || n <= 0) return "Yuklanmoqda...";
+      if (n < 1) return `${Math.max(1, Math.round(n * 1000))} KB`;
+      return `${n.toFixed(1)} MB`;
+    };
+
+    const renderCollectionCards = (collections, role) => {
+      const langNow = state.settings?.language || "en";
+      const preferred = [...collections].sort((a, b) => {
+        const aRec = isRecommendedForRole(a, role);
+        const bRec = isRecommendedForRole(b, role);
+        if (aRec && !bRec) return -1;
+        if (!aRec && bRec) return 1;
+        return 0;
+      });
+      recommendedList.innerHTML = "";
+      preferred.forEach((collection) => {
+        const article = document.createElement("article");
+        article.className = "survey-library-card";
+        article.setAttribute("role", "listitem");
+
+        const labelEl = document.createElement("label");
+        labelEl.className = "survey-library-card__label";
+
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.className = "survey-library-card__input";
+        input.dataset.id = String(collection.id || "");
+        input.checked = isRecommendedForRole(collection, role);
+
+        const top = document.createElement("div");
+        top.className = "survey-library-card__top";
+
+        const thumbWrap = document.createElement("div");
+        thumbWrap.className = "survey-library-card__thumb-wrap";
+        const thumb = document.createElement("div");
+        thumb.className = "survey-library-card__thumb";
+        const firstPreview = Array.isArray(collection.preview_urls) ? collection.preview_urls[0] : "";
+        if (firstPreview) {
+          const img = document.createElement("img");
+          img.src = firstPreview;
+          img.alt = "";
+          img.loading = "lazy";
+          thumb.appendChild(img);
+        } else {
+          const hue = surveyLibraryPackageHue(collection.name || collection.id || "");
+          const hue2 = (hue + 52) % 360;
+          thumb.style.background = `linear-gradient(135deg, hsl(${hue} 42% 46%) 0%, hsl(${hue2} 48% 32%) 100%)`;
+          const shine = document.createElement("div");
+          shine.className = "survey-library-card__thumb-shine";
+          thumb.appendChild(shine);
+        }
+        thumbWrap.appendChild(thumb);
+        top.appendChild(thumbWrap);
+
+        const main = document.createElement("div");
+        main.className = "survey-library-card__main";
+        const titleRow = document.createElement("div");
+        titleRow.className = "survey-library-card__title-row";
+        const title = document.createElement("h3");
+        title.className = "survey-library-card__title";
+        title.dataset.collectionName = collection.name || "";
+        title.textContent = localizedCollectionName(collection, langNow);
+
+        const recChip = document.createElement("span");
+        recChip.className = "survey-library-card__rec-chip";
+        if (isRecommendedForRole(collection, role)) {
+          recChip.textContent = t("survey.recommended", langNow);
+        } else {
+          recChip.classList.add("hidden");
+        }
+        const qty = document.createElement("span");
+        qty.className = "survey-library-card__qty";
+        qty.textContent = `x${Number(collection.item_count || 0)}`;
+        titleRow.appendChild(title);
+        titleRow.appendChild(recChip);
+        titleRow.appendChild(qty);
+
+        const desc = document.createElement("p");
+        desc.className = "survey-library-card__desc";
+        desc.textContent = t("survey.packageBlurb", langNow);
+        const price = document.createElement("p");
+        price.className = "survey-library-card__price";
+        price.textContent = t("survey.packageFree", langNow);
+
+        main.appendChild(titleRow);
+        main.appendChild(desc);
+        main.appendChild(price);
+        top.appendChild(main);
+
+        const divider = document.createElement("div");
+        divider.className = "survey-library-card__divider";
+        const bottom = document.createElement("div");
+        bottom.className = "survey-library-card__bottom";
+        const totalBlock = document.createElement("div");
+        totalBlock.className = "survey-library-card__total";
+        const totalLabel = document.createElement("span");
+        totalLabel.className = "survey-library-card__total-label";
+        totalLabel.textContent = t("survey.libraryCardTotalLabel", langNow);
+        const totalValue = document.createElement("span");
+        totalValue.className = "survey-library-card__total-value";
+        totalValue.textContent = formatCollectionSize(collection.file_size_mb);
+        totalBlock.appendChild(totalLabel);
+        totalBlock.appendChild(totalValue);
+
+        const actions = document.createElement("div");
+        actions.className = "survey-library-card__actions";
+        const pill = document.createElement("span");
+        pill.className = "survey-library-card__pill";
+        const round = document.createElement("span");
+        round.className = "survey-library-card__round";
+        round.setAttribute("aria-hidden", "true");
+        actions.appendChild(pill);
+        actions.appendChild(round);
+        const syncPackUi = () => {
+          const l = state.settings?.language || "en";
+          pill.textContent = input.checked ? t("survey.packageAddedPill", l) : t("survey.packageAddPill", l);
+          continueBtn.disabled =
+            recommendedList.querySelectorAll(".survey-library-card__input:checked").length === 0;
+        };
+        input.addEventListener("change", syncPackUi);
+        syncPackUi();
+
+        bottom.appendChild(totalBlock);
+        bottom.appendChild(actions);
+        labelEl.appendChild(input);
+        labelEl.appendChild(top);
+        labelEl.appendChild(divider);
+        labelEl.appendChild(bottom);
+        article.appendChild(labelEl);
+        recommendedList.appendChild(article);
+      });
+    };
+
+    const initCollectionsScreen = async () => {
+      showCollectionsLoading();
+      try {
+        const index = await window.qooti?.fetchFreeCollectionsIndex?.();
+        const free = Array.isArray(index?.free) ? index.free : [];
+        allCollections = free;
+        if (!allCollections.length) {
+          showCollectionsEmpty();
+          continueBtn.disabled = true;
+          return;
+        }
+        renderCollectionCards(allCollections, answers.creative_role || "Other Creative Work");
+      } catch (err) {
+        console.error("[collections] init failed", err);
+        showCollectionsOffline();
+        continueBtn.disabled = true;
+      }
+    };
 
     const onLangChange = () => {
       renderStep();
@@ -2353,14 +2553,12 @@ function showSurveyView() {
           if (k) el.textContent = t(k, newLang);
         });
         recommendedList.querySelectorAll(".survey-library-card__title").forEach((el) => {
-          const name = el.dataset.collectionName;
-          if (name) el.textContent = t(`survey.collection.${name}`, newLang) || name;
+          const id = el.closest(".survey-library-card")?.querySelector(".survey-library-card__input")?.dataset?.id;
+          const col = allCollections.find((c) => String(c.id) === String(id));
+          if (col) el.textContent = localizedCollectionName(col, newLang);
         });
         recommendedList.querySelectorAll(".survey-library-card__rec-chip:not(.hidden)").forEach((el) => {
           el.textContent = t("survey.recommended", newLang);
-        });
-        recommendedList.querySelectorAll(".survey-library-card__qty").forEach((el) => {
-          el.textContent = t("survey.packageQty", newLang);
         });
         recommendedList.querySelectorAll(".survey-library-card__desc").forEach((el) => {
           el.textContent = t("survey.packageBlurb", newLang);
@@ -2372,7 +2570,9 @@ function showSurveyView() {
           el.textContent = t("survey.packageFree", newLang);
         });
         recommendedList.querySelectorAll(".survey-library-card__total-value").forEach((el) => {
-          el.textContent = t("survey.packageFree", newLang);
+          const id = el.closest(".survey-library-card")?.querySelector(".survey-library-card__input")?.dataset?.id;
+          const col = allCollections.find((c) => String(c.id) === String(id));
+          if (col) el.textContent = formatCollectionSize(col.file_size_mb);
         });
         recommendedList.querySelectorAll(".survey-library-card__pill").forEach((el) => {
           const input = el.closest(".survey-library-card__label")?.querySelector(".survey-library-card__input");
@@ -2567,145 +2767,129 @@ function showSurveyView() {
       successScreen.classList.remove("hidden");
       successScreen.setAttribute("aria-hidden", "false");
 
-      const role = answers.creative_role || "Other Creative Work";
-      const names = RECOMMENDED_COLLECTIONS_BY_ROLE[role] || RECOMMENDED_COLLECTIONS_BY_ROLE["Other Creative Work"];
-      const recommended = new Set(names);
-      const langNow = state.settings?.language || "en";
-      recommendedList.innerHTML = "";
-      ALL_ONBOARDING_COLLECTIONS.forEach((name) => {
-        const article = document.createElement("article");
-        article.className = "survey-library-card";
-        article.setAttribute("role", "listitem");
-
-        const labelEl = document.createElement("label");
-        labelEl.className = "survey-library-card__label";
-
-        const input = document.createElement("input");
-        input.type = "checkbox";
-        input.className = "survey-library-card__input";
-        input.checked = recommended.has(name);
-        input.dataset.name = name;
-
-        const top = document.createElement("div");
-        top.className = "survey-library-card__top";
-
-        const thumbWrap = document.createElement("div");
-        thumbWrap.className = "survey-library-card__thumb-wrap";
-        const thumb = document.createElement("div");
-        thumb.className = "survey-library-card__thumb";
-        const hue = surveyLibraryPackageHue(name);
-        const hue2 = (hue + 52) % 360;
-        thumb.style.background = `linear-gradient(135deg, hsl(${hue} 42% 46%) 0%, hsl(${hue2} 48% 32%) 100%)`;
-        const shine = document.createElement("div");
-        shine.className = "survey-library-card__thumb-shine";
-        thumb.appendChild(shine);
-        thumbWrap.appendChild(thumb);
-        top.appendChild(thumbWrap);
-
-        const main = document.createElement("div");
-        main.className = "survey-library-card__main";
-
-        const titleRow = document.createElement("div");
-        titleRow.className = "survey-library-card__title-row";
-
-        const title = document.createElement("h3");
-        title.className = "survey-library-card__title";
-        title.dataset.collectionName = name;
-        title.textContent = t(`survey.collection.${name}`, langNow) || name;
-
-        const recChip = document.createElement("span");
-        recChip.className = "survey-library-card__rec-chip";
-        if (recommended.has(name)) {
-          recChip.textContent = t("survey.recommended", langNow);
-        } else {
-          recChip.classList.add("hidden");
-        }
-
-        const qty = document.createElement("span");
-        qty.className = "survey-library-card__qty";
-        qty.textContent = t("survey.packageQty", langNow);
-
-        titleRow.appendChild(title);
-        titleRow.appendChild(recChip);
-        titleRow.appendChild(qty);
-
-        const desc = document.createElement("p");
-        desc.className = "survey-library-card__desc";
-        desc.textContent = t("survey.packageBlurb", langNow);
-
-        const price = document.createElement("p");
-        price.className = "survey-library-card__price";
-        price.textContent = t("survey.packageFree", langNow);
-
-        main.appendChild(titleRow);
-        main.appendChild(desc);
-        main.appendChild(price);
-        top.appendChild(main);
-
-        const divider = document.createElement("div");
-        divider.className = "survey-library-card__divider";
-        divider.setAttribute("aria-hidden", "true");
-
-        const bottom = document.createElement("div");
-        bottom.className = "survey-library-card__bottom";
-
-        const totalBlock = document.createElement("div");
-        totalBlock.className = "survey-library-card__total";
-        const totalLabel = document.createElement("span");
-        totalLabel.className = "survey-library-card__total-label";
-        totalLabel.textContent = t("survey.libraryCardTotalLabel", langNow);
-        const totalValue = document.createElement("span");
-        totalValue.className = "survey-library-card__total-value";
-        totalValue.textContent = t("survey.packageFree", langNow);
-        totalBlock.appendChild(totalLabel);
-        totalBlock.appendChild(totalValue);
-
-        const actions = document.createElement("div");
-        actions.className = "survey-library-card__actions";
-        const pill = document.createElement("span");
-        pill.className = "survey-library-card__pill";
-        const round = document.createElement("span");
-        round.className = "survey-library-card__round";
-        round.setAttribute("aria-hidden", "true");
-        actions.appendChild(pill);
-        actions.appendChild(round);
-
-        const syncPackUi = () => {
-          const l = state.settings?.language || "en";
-          pill.textContent = input.checked ? t("survey.packageAddedPill", l) : t("survey.packageAddPill", l);
-        };
-        input.addEventListener("change", syncPackUi);
-        syncPackUi();
-
-        bottom.appendChild(totalBlock);
-        bottom.appendChild(actions);
-
-        labelEl.appendChild(input);
-        labelEl.appendChild(top);
-        labelEl.appendChild(divider);
-        labelEl.appendChild(bottom);
-        article.appendChild(labelEl);
-        recommendedList.appendChild(article);
-      });
-
-      applyTranslations();
+      await initCollectionsScreen();
 
       continueBtn.onclick = async () => {
+        console.log("[collections] continue clicked");
+        const selectedIds = Array.from(
+          recommendedList.querySelectorAll(".survey-library-card__input:checked")
+        ).map((el) => String(el.dataset.id || ""));
+        console.log("[collections] selected ids:", selectedIds);
+        console.log("[collections] all collections:", allCollections);
+        if (!selectedIds.length) {
+          console.warn("[collections] nothing selected");
+          return;
+        }
+        const selectedCollections = allCollections
+          .filter((c) =>
+            recommendedList.querySelector(`.survey-library-card__input[data-id="${String(c.id)}"]`)?.checked
+          )
+          .sort((a, b) => Number(a.file_size_mb || 0) - Number(b.file_size_mb || 0));
+        console.log("[collections] filtered selected:", selectedCollections);
+
+        if (!selectedCollections.length) {
+          console.error("[collections] selected ids exist but no matching collections found");
+          console.error("[collections] this means allCollections is empty or ids dont match");
+          return;
+        }
+        const first = selectedCollections[0];
+        const restCount = Math.max(0, selectedCollections.length - 1);
+        console.log("[collections] first to download:", first);
+        console.log("[collections] download_url:", first?.download_url);
+        console.log("[collections] rest to download:", restCount);
+        if (!first?.download_url) {
+          console.error("[collections] MISSING download_url — index.json is incomplete");
+          console.error("[collections] missing download_url for:", first?.id);
+          alert("download_url topilmadi. index.json ni tekshiring.");
+          continueBtn.disabled = false;
+          return;
+        }
+
         continueBtn.disabled = true;
+        const langNow2 = state.settings?.language || "en";
+        let stopProgress = null;
+        const progressModal = document.createElement("div");
+        progressModal.className = "app-modal app-modal--confirm";
+        progressModal.innerHTML = `
+          <div class="app-modal__backdrop"></div>
+          <div class="app-modal__dialog app-modal__dialog--wide">
+            <div class="app-modal__body">
+              <div class="app-modal__message">${escapeHtml(t("survey.libraryBarHint", langNow2) || "Downloading packs…")}</div>
+              <div id="onboardingCollectionProgressWrap" class="pack-export-progress" aria-live="polite">
+                <div
+                  class="pack-export-progress__track"
+                  role="progressbar"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  aria-valuenow="0"
+                >
+                  <div id="onboardingCollectionProgressBar" class="pack-export-progress__fill" style="width:0%"></div>
+                </div>
+                <div id="onboardingCollectionProgressLabel" class="pack-export-progress__label"></div>
+              </div>
+            </div>
+          </div>
+        `;
+        const progressBar = progressModal.querySelector("#onboardingCollectionProgressBar");
+        const progressTrack = progressModal.querySelector(".pack-export-progress__track");
+        const progressLabel = progressModal.querySelector("#onboardingCollectionProgressLabel");
+        const setProgress = ({ pct = 0, label = "" } = {}) => {
+          const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+          if (progressBar) progressBar.style.width = `${p}%`;
+          progressTrack?.setAttribute("aria-valuenow", String(p));
+          if (progressLabel) progressLabel.textContent = String(label || "");
+        };
+        const mountProgress = () => {
+          if (!document.body.contains(progressModal)) document.body.appendChild(progressModal);
+        };
+        const unmountProgress = () => {
+          if (document.body.contains(progressModal)) document.body.removeChild(progressModal);
+        };
         try {
-          const existingNames = new Set(
-            (state.collections || []).map((collection) => String(collection?.name || "").trim().toLowerCase())
-          );
-          for (const node of recommendedList.querySelectorAll(".survey-library-card__input:checked")) {
-            const name = node.dataset.name;
-            const normalized = String(name || "").trim().toLowerCase();
-            if (!name || existingNames.has(normalized) || !window.qooti?.createCollection) continue;
-            await window.qooti.createCollection(name);
-            existingNames.add(normalized);
+          mountProgress();
+          const currentIds = new Set(selectedCollections.map((c) => String(c.id)));
+          stopProgress =
+            typeof window.qooti?.onCollectionProgress === "function"
+              ? window.qooti.onCollectionProgress((payload) => {
+                  const id = String(payload?.id || "");
+                  if (!currentIds.has(id)) return;
+                  const status = String(payload?.status || "");
+                  const pct = Number(payload?.pct || 0);
+                  const col = selectedCollections.find((c) => String(c.id) === id);
+                  const name = col ? localizedCollectionName(col, langNow2) : id;
+                  const statusText =
+                    status === "importing"
+                      ? `Importing “${name}”…`
+                      : status === "complete"
+                        ? `Done: “${name}”`
+                        : `Downloading “${name}”…`;
+                  setProgress({ pct, label: statusText });
+                })
+              : () => {};
+          setProgress({ pct: 0, label: "Starting…" });
+          console.log("[collections] invoking download_and_import_collection...");
+          for (const col of selectedCollections) {
+            if (!col?.download_url) {
+              console.error("[collections] missing download_url for:", col?.id);
+              continue;
+            }
+            console.log("[collections] invoking item:", {
+              id: String(col.id || ""),
+              download_url: String(col.download_url || ""),
+            });
+            setProgress({ pct: 0, label: `Downloading “${localizedCollectionName(col, langNow2)}”…` });
+            await window.qooti?.downloadAndImportCollection?.(String(col.id), String(col.download_url || ""));
           }
+          console.log("[collections] download success");
           await refreshData();
         } catch (e) {
-          console.warn("[qooti] create recommended collections failed", e);
+          console.error("[collections] invoke failed:", e);
+          alert(`Xatolik: ${e}`);
+        } finally {
+          try {
+            if (typeof stopProgress === "function") stopProgress();
+          } catch (_) {}
+          unmountProgress();
         }
         successScreen.classList.add("hidden");
         successScreen.setAttribute("aria-hidden", "true");
@@ -2769,7 +2953,12 @@ function wireSettingsControls() {
     }
     applyTheme();
   });
-  $("#settingsCheckForUpdates")?.addEventListener("click", () => {
+  $("#settingsCheckForUpdates")?.addEventListener("click", async () => {
+    const phase = updaterUiState?.phase || "idle";
+    if (phase === "update_available") {
+      window.qooti?.downloadUpdate?.().catch((e) => console.warn("[qooti] downloadUpdate failed", e?.message || e));
+      return;
+    }
     window.qooti?.checkForUpdates?.().catch((e) => console.warn("[qooti] checkForUpdates failed", e?.message || e));
   });
   const settingsAccountAvatarBtn = $("#settingsAccountAvatarBtn");
@@ -3560,7 +3749,7 @@ function showContextMenu(e, item) {
       row.addEventListener("mouseleave", hideSubmenuSoon);
       submenu.addEventListener("mouseenter", showSubmenu);
       submenu.addEventListener("mouseleave", hideSubmenuSoon);
-      showSubmenu();
+      // Do not auto-open on menu mount; open only when user hovers this row.
     } else if (mi.action) {
       row.addEventListener("click", mi.action);
     }
@@ -3759,15 +3948,24 @@ function buildCollectionSubmenu(item) {
         `;
         row.addEventListener("click", async (e) => {
           e.stopPropagation();
+          const subLang = state.settings?.language || "en";
           uilog("ctxAddToCollection", "clicked", displayName);
           hideContextMenu();
           try {
-            await window.qooti.addToCollection(c.id, [item.id]);
-            recordEngagementAfterCollectionAdd(item);
+            if (isMember) {
+              await window.qooti.removeFromCollection(c.id, item.id);
+            } else {
+              await window.qooti.addToCollection(c.id, [item.id]);
+              recordEngagementAfterCollectionAdd(item);
+            }
             await refreshData();
             await loadInspirations(false);
-            const subLang = state.settings?.language || "en";
-            toast(t("ctx.addedToCollection", subLang).replace("%s", displayName), { durationMs: 2800, variant: "success" });
+            toast(
+              isMember
+                ? `Removed from ${displayName}`
+                : t("ctx.addedToCollection", subLang).replace("%s", displayName),
+              { durationMs: 2800, variant: "success" }
+            );
             uilog("ctxAddToCollection", "done", displayName);
           } catch (err) {
             uilog("ctxAddToCollection", "error", err?.message || String(err));
@@ -5024,6 +5222,7 @@ function hideUpdateIndicator() {
 function renderSettingsUpdateSection(detail = updaterUiState) {
   const labelEl = $("#settingsUpdateStatusLabel");
   const metaEl = $("#settingsUpdateStatusMeta");
+  const actionBtn = $("#settingsCheckForUpdates");
   if (!labelEl || !metaEl) return;
 
   const lang = state.settings?.language || "en";
@@ -5064,6 +5263,16 @@ function renderSettingsUpdateSection(detail = updaterUiState) {
 
   setText(labelEl, label);
   setText(metaEl, meta);
+
+  if (actionBtn) {
+    const busy = phase === "checking" || phase === "downloading" || phase === "installing" || phase === "restarting";
+    actionBtn.disabled = busy;
+    if (phase === "update_available") {
+      setText(actionBtn, t("settings.downloadUpdate", lang));
+    } else {
+      setText(actionBtn, t("settings.checkForUpdates", lang));
+    }
+  }
 }
 
 function renderUpdateIndicator(detail = updaterUiState) {
@@ -5309,9 +5518,21 @@ async function handleDeleteSurveySearchCommand() {
 
 async function handleDelAllSearchCommand() {
   if (delAllInProgress) return;
+  if (typeof window.qooti?.clearAllMedia !== "function") {
+    notifyMediaAdd("Clear all media is not available in this build.", { variant: "error" });
+    return;
+  }
+  const lang = state.settings?.language || "en";
+  const ok = await showConfirm({
+    message: t("search.bltDelallConfirm", lang),
+    confirmLabel: t("ctx.delete", lang),
+    cancelLabel: t("feedback.cancel", lang),
+    danger: true,
+  });
+  if (!ok) return;
   delAllInProgress = true;
   try {
-    const result = await window.qooti.clearAllMedia?.();
+    const result = await window.qooti.clearAllMedia();
     state.selected.clear();
     state.query = "";
     state.currentCollectionId = null;
@@ -5329,7 +5550,7 @@ async function handleDelAllSearchCommand() {
       { variant: "success" }
     );
   } catch (err) {
-    console.error("delall clearAllMedia error:", err);
+    console.error("blt_delall clearAllMedia error:", err);
     notifyMediaAdd(err?.message || "Failed to clear media", { variant: "error" });
   } finally {
     delAllInProgress = false;
@@ -5744,7 +5965,8 @@ function collectionPreviewItemImage(it) {
   const storedUrl = it?.stored_path_url;
   if (thumbUrl) return loadableUrl(thumbUrl, it.thumbnail_path);
   if ((it?.type === "image" || it?.type === "gif") && storedUrl) return loadableUrl(storedUrl, it.stored_path);
-  if (it?.type === "video" && storedUrl) return loadableUrl(storedUrl, it.stored_path);
+  // Local video file cannot be used as <img src>; caller uses <video> when thumbnail is missing.
+  if (it?.type === "link" && storedUrl) return loadableUrl(storedUrl, it.stored_path);
   return "";
 }
 
@@ -6265,6 +6487,23 @@ function renderCollectionsPage(rows) {
           img.alt = "";
           img.loading = "lazy";
           cell.appendChild(img);
+        } else if (item?.type === "video" && item?.stored_path_url) {
+          const vsrc = loadableUrl(item.stored_path_url, item.stored_path);
+          if (vsrc) {
+            const vid = document.createElement("video");
+            vid.src = vsrc;
+            vid.muted = true;
+            vid.playsInline = true;
+            vid.setAttribute("playsinline", "");
+            vid.preload = "metadata";
+            vid.setAttribute("aria-hidden", "true");
+            cell.appendChild(vid);
+          } else {
+            const glyph = document.createElement("span");
+            glyph.className = "collections-card__glyph";
+            glyph.textContent = "▶";
+            cell.appendChild(glyph);
+          }
         } else {
           const glyph = document.createElement("span");
           glyph.className = "collections-card__glyph";
@@ -6419,9 +6658,12 @@ function shuffleArray(array) {
 const VERTICAL_ASPECT_THRESHOLD = 0.95;
 
 function isShortFormContent(it) {
-  const ar = it.aspect_ratio;
-  if (ar != null && typeof ar === "number") {
-    return ar < VERTICAL_ASPECT_THRESHOLD;
+  const raw = it.aspect_ratio;
+  if (raw !== null && raw !== undefined && raw !== "") {
+    const ar = typeof raw === "number" ? raw : Number(raw);
+    if (Number.isFinite(ar) && ar > 0) {
+      return ar < VERTICAL_ASPECT_THRESHOLD;
+    }
   }
   const url = it.source_url || "";
   return (
@@ -6522,6 +6764,12 @@ function setupTagFilterDragScroll() {
   let scrollRaf = 0;
   /** When set, animating to this scroll position after release (no instant snap). */
   let coastTarget = null;
+  /** mousedown began on a tag pill — wait for horizontal slop before drag-scroll (so click still works). */
+  let startedOnPill = false;
+  /** True once we are actually dragging the strip (immediate if mousedown was not on a pill). */
+  let dragActive = false;
+  /** px horizontal movement on a pill before treating gesture as scroll */
+  const PILL_DRAG_THRESHOLD = 8;
 
   const clampScrollLeft = (left) => {
     const max = Math.max(0, scrollEl.scrollWidth - scrollEl.clientWidth);
@@ -6532,6 +6780,9 @@ function setupTagFilterDragScroll() {
     scrollRaf = 0;
     let target;
     if (isDown) {
+      if (startedOnPill && !dragActive) {
+        return;
+      }
       const dx = pendingPageX - startX;
       if (Math.abs(dx) > 4) suppressClickUntil = Date.now() + 150;
       target = clampScrollLeft(startLeft - dx);
@@ -6567,14 +6818,23 @@ function setupTagFilterDragScroll() {
     isDown = false;
     scrollEl.classList.remove("is-dragging");
     document.body.classList.remove("tag-filter-dragging");
-    const dx = pendingPageX - startX;
-    coastTarget = clampScrollLeft(startLeft - dx);
-    if (Math.abs(coastTarget - scrollEl.scrollLeft) <= 0.5) {
-      scrollEl.scrollLeft = coastTarget;
-      coastTarget = null;
-      return;
+    try {
+      if (!dragActive) {
+        coastTarget = null;
+        return;
+      }
+      const dx = pendingPageX - startX;
+      coastTarget = clampScrollLeft(startLeft - dx);
+      if (Math.abs(coastTarget - scrollEl.scrollLeft) <= 0.5) {
+        scrollEl.scrollLeft = coastTarget;
+        coastTarget = null;
+        return;
+      }
+      if (!scrollRaf) scrollRaf = requestAnimationFrame(tickDragScroll);
+    } finally {
+      startedOnPill = false;
+      dragActive = false;
     }
-    if (!scrollRaf) scrollRaf = requestAnimationFrame(tickDragScroll);
   };
 
   scrollEl.addEventListener("mousedown", (e) => {
@@ -6584,18 +6844,33 @@ function setupTagFilterDragScroll() {
       scrollRaf = 0;
     }
     coastTarget = null;
+    startedOnPill = !!e.target.closest(".tag-filter-pill");
+    dragActive = !startedOnPill;
     isDown = true;
     startX = e.pageX;
     pendingPageX = e.pageX;
     startLeft = scrollEl.scrollLeft;
     suppressClickUntil = 0;
-    scrollEl.classList.add("is-dragging");
-    document.body.classList.add("tag-filter-dragging");
+    if (dragActive) {
+      scrollEl.classList.add("is-dragging");
+      document.body.classList.add("tag-filter-dragging");
+    }
   });
 
   window.addEventListener("mousemove", (e) => {
     if (!isDown) return;
     pendingPageX = e.pageX;
+    if (startedOnPill && !dragActive) {
+      const dx = pendingPageX - startX;
+      if (Math.abs(dx) >= PILL_DRAG_THRESHOLD) {
+        dragActive = true;
+        scrollEl.classList.add("is-dragging");
+        document.body.classList.add("tag-filter-dragging");
+        suppressClickUntil = Date.now() + 150;
+      } else {
+        return;
+      }
+    }
     if (!scrollRaf) scrollRaf = requestAnimationFrame(tickDragScroll);
     e.preventDefault();
   });
@@ -6624,14 +6899,47 @@ function refreshMediaPreviewItemFromState() {
 /** @param shuffle If true, randomize the current result set (Shuffle order menu only). Default false: keep API order (newest first). */
 async function loadInspirations(shuffle = false) {
   try {
+    if (state.view.startsWith("collection:")) {
+      const collectionId = state.view.split(":")[1];
+      let items = [];
+      let offset = 0;
+      for (;;) {
+        const params = {
+          query: state.query,
+          limit: LIST_INSPIRATIONS_MAX_LIMIT,
+          offset,
+          collectionId,
+        };
+        if (state.colorFilter) {
+          params.colorFilter = { r: state.colorFilter.r, g: state.colorFilter.g, b: state.colorFilter.b };
+        }
+        if (state.selectedTagId) {
+          params.tagId = state.selectedTagId;
+        }
+        const result = await window.qooti.listInspirations(params);
+        const batch = Array.isArray(result) ? result : [];
+        if (!Array.isArray(result)) {
+          console.warn("[qooti] listInspirations returned non-array:", result);
+        }
+        items = items.concat(batch);
+        if (batch.length < LIST_INSPIRATIONS_MAX_LIMIT) break;
+        offset += LIST_INSPIRATIONS_MAX_LIMIT;
+      }
+      state.inspirations = items;
+      state.inspirationsHasMore = false;
+      if (shuffle && items.length > 0) {
+        shuffleArray(state.inspirations);
+      }
+      renderGrid();
+      refreshMediaPreviewItemFromState();
+      return;
+    }
+
     const params = {
       query: state.query,
       limit: GRID_INITIAL_LIMIT,
       offset: 0,
     };
-    if (state.view.startsWith("collection:")) {
-      params.collectionId = state.view.split(":")[1];
-    }
     if (state.colorFilter) {
       params.colorFilter = { r: state.colorFilter.r, g: state.colorFilter.g, b: state.colorFilter.b };
     }
@@ -6652,6 +6960,7 @@ async function loadInspirations(shuffle = false) {
       shuffleArray(state.inspirations);
     }
     renderGrid();
+    void autofillShortFormRowIfNeeded();
     refreshMediaPreviewItemFromState();
   } catch (e) {
     console.error("[qooti] loadInspirations failed:", e?.message || e);
@@ -6703,6 +7012,26 @@ async function loadMoreInspirations() {
   } finally {
     state.inspirationsLoadingMore = false;
     updateGridLazySpinner(false);
+  }
+}
+
+async function autofillShortFormRowIfNeeded() {
+  if (state.view !== "all") return;
+  if (state.query || state.selectedTagId || state.colorFilter) return;
+  if (state.inspirationsLoadingMore || !state.inspirationsHasMore) return;
+  const gridView = $("#gridView");
+  if (!gridView) return;
+
+  // Keep home feed responsive, but ensure short-form row is populated without requiring scroll.
+  const targetVisibleShort = Math.max(1, computeShortFormCols(gridView.offsetWidth || 0));
+  let shortCount = state.inspirations.filter(showsInShortFormRow).length;
+  if (shortCount >= targetVisibleShort) return;
+
+  let guard = 0;
+  while (state.inspirationsHasMore && !state.inspirationsLoadingMore && shortCount < targetVisibleShort && guard < 4) {
+    guard += 1;
+    await loadMoreInspirations();
+    shortCount = state.inspirations.filter(showsInShortFormRow).length;
   }
 }
 
@@ -7163,7 +7492,8 @@ function applyShortFormSectionState(sectionEl, itemCount) {
   const toggleBtn = sectionEl.querySelector("[data-short-toggle]");
   if (!gridEl || !toggleBtn) return;
 
-  if (isSpecificTagPillFilterActive()) {
+  const inCollectionView = state.view && String(state.view).startsWith("collection:");
+  if (isSpecificTagPillFilterActive() || inCollectionView) {
     gridEl.style.maxHeight = "none";
     gridEl.style.overflow = "visible";
     toggleBtn.classList.add("hidden");
@@ -8594,13 +8924,33 @@ function groupHistoryByTime(items) {
   return groups;
 }
 
-function historyThumbUrl(it) {
+/** History row thumb markup: still images use <img>; local video files use <video> (browsers cannot decode MP4 as img). */
+function historyRowThumbInnerHtml(it, isVideoLayout) {
   const thumbUrl = it.thumbnail_path_url;
   const storedUrl = it.stored_path_url;
-  if (thumbUrl) return loadableUrl(thumbUrl, it.thumbnail_path);
-  if ((it.type === "image" || it.type === "gif") && storedUrl) return loadableUrl(storedUrl, it.stored_path);
-  if (it.type === "video" && storedUrl) return loadableUrl(storedUrl, it.stored_path);
-  return "";
+  const phVideo = '<span class="history-row__placeholder" aria-hidden="true">▶</span>';
+  const phStill = '<span class="history-row__placeholder" aria-hidden="true">◇</span>';
+  const placeholder = isVideoLayout ? phVideo : phStill;
+
+  if (thumbUrl) {
+    const src = loadableUrl(thumbUrl, it.thumbnail_path);
+    if (src) {
+      return `<img class="history-row__img" src="${escapeHtml(src)}" alt="" loading="lazy" />`;
+    }
+  }
+  if (it.type === "video" && storedUrl) {
+    const src = loadableUrl(storedUrl, it.stored_path);
+    if (src) {
+      return `<video class="history-row__img" src="${escapeHtml(src)}" muted playsinline preload="metadata" aria-hidden="true"></video>`;
+    }
+  }
+  if ((it.type === "image" || it.type === "gif") && storedUrl) {
+    const src = loadableUrl(storedUrl, it.stored_path);
+    if (src) {
+      return `<img class="history-row__img" src="${escapeHtml(src)}" alt="" loading="lazy" />`;
+    }
+  }
+  return placeholder;
 }
 
 function historyTypeLabel(it) {
@@ -8673,12 +9023,9 @@ function renderHistoryContent() {
       const source = sourceLabel(it);
       const typeLabel = historyTypeLabel(it);
       const title = (it.title || "").trim() || "—";
-      const thumbSrc = historyThumbUrl(it);
       const isVideo = it.type === "video" || it.type === "link";
       const thumbClass = "history-row__thumb history-row__thumb--" + (isVideo ? "video" : "square");
-      const thumbContent = thumbSrc
-        ? `<img class="history-row__img" src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" />`
-        : '<span class="history-row__placeholder" aria-hidden="true">' + (isVideo ? "▶" : "◇") + "</span>";
+      const thumbContent = historyRowThumbInnerHtml(it, isVideo);
       row.innerHTML = `
         <span class="${escapeHtml(thumbClass)}">${thumbContent}</span>
         <div class="history-row__center">
@@ -8791,6 +9138,7 @@ function hideHistoryView() {
   if (historyView) historyView.classList.add("hidden");
   $("#gridView").classList.remove("hidden");
   renderGrid();
+  applyTagFilterVisibility();
 }
 
 async function runExportBackupFlow() {
@@ -9762,21 +10110,22 @@ function showFeedbackModal() {
     wrap.className = "app-modal app-modal--feedback";
     wrap.innerHTML = `
       <div class="app-modal__backdrop"></div>
-      <div class="app-modal__dialog app-modal__dialog--wide">
-        <div class="app-modal__body">
-          <div class="app-modal__title">${escapeHtml(t("feedback.title", lang))}</div>
-          <div class="app-modal__message">${escapeHtml(t("feedback.description", lang))}</div>
-          <textarea id="feedbackMessageInput" class="feedback-modal__textarea" placeholder="${escapeHtml(t("feedback.placeholder", lang))}" maxlength="3000"></textarea>
-          <label class="feedback-modal__screenshot-option">
-            <input type="checkbox" id="feedbackIncludeScreenshot" class="feedback-modal__screenshot-checkbox" />
-            <span>${escapeHtml(t("feedback.includeScreenshot", lang))}</span>
-          </label>
-          <div class="feedback-modal__attach-row">
-            <label for="feedbackImageInput" class="btn btn--secondary feedback-modal__attach-btn">${escapeHtml(t("feedback.attachFile", lang))}</label>
-            <input id="feedbackImageInput" type="file" accept="image/png,image/jpeg,image/jpg,image/webp" class="feedback-modal__file-input" />
-            <span id="feedbackImageName" class="feedback-modal__file-name">${escapeHtml(t("feedback.noFileSelected", lang))}</span>
+      <div class="app-modal__dialog app-modal__dialog--wide app-modal__dialog--feedback" role="dialog" aria-modal="true" aria-labelledby="feedbackModalHeading">
+        <div class="app-modal__body feedback-modal">
+          <h2 class="feedback-modal__title" id="feedbackModalHeading">${escapeHtml(t("feedback.title", lang))}</h2>
+          <textarea id="feedbackMessageInput" class="feedback-modal__textarea" placeholder="${escapeHtml(t("feedback.placeholder", lang))}" maxlength="3000" rows="5"></textarea>
+          <div class="feedback-modal__options">
+            <label class="feedback-modal__screenshot-option">
+              <input type="checkbox" id="feedbackIncludeScreenshot" class="feedback-modal__screenshot-checkbox" />
+              <span class="feedback-modal__option-text">${escapeHtml(t("feedback.includeScreenshot", lang))}</span>
+            </label>
+            <div class="feedback-modal__attach-row">
+              <label for="feedbackImageInput" class="feedback-modal__attach-link">${escapeHtml(t("feedback.attachFile", lang))}</label>
+              <input id="feedbackImageInput" type="file" accept="image/png,image/jpeg,image/jpg,image/webp" class="feedback-modal__file-input" />
+              <span id="feedbackImageName" class="feedback-modal__file-name">${escapeHtml(t("feedback.noFileSelected", lang))}</span>
+            </div>
           </div>
-          <div id="feedbackModalError" class="feedback-modal__error hidden"></div>
+          <div id="feedbackModalError" class="feedback-modal__error hidden" role="alert"></div>
         </div>
         <div class="app-modal__footer">
           <button type="button" class="btn app-modal__cancel">${escapeHtml(t("feedback.cancel", lang))}</button>
@@ -10217,6 +10566,7 @@ function wireEvents() {
     loadInspirations(false);
   });
   $("#tagFilterRecent")?.addEventListener("click", () => {
+    state.selectedTagId = "";
     state.sortByRecent = true;
     updateTagFilterBarActiveState();
     loadInspirations(false);
@@ -10228,6 +10578,7 @@ function wireEvents() {
       const pill = e.target.closest(".tag-filter-pill[data-tag-id]");
       if (!pill || pill.id === "tagFilterAll" || pill.id === "tagFilterRecent") return;
       const tagId = pill.dataset.tagId ?? "";
+      state.sortByRecent = false;
       state.selectedTagId = tagId;
       updateTagFilterBarActiveState();
       loadInspirations(false);
@@ -10986,7 +11337,7 @@ function wireEvents() {
       await handleDeleteSurveySearchCommand();
       return;
     }
-    if (value === "delall") {
+    if (value === "blt_delall") {
       e.preventDefault();
       e.stopPropagation();
       $("#searchInput").value = "";

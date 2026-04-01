@@ -503,11 +503,11 @@ export function setupTauriApi() {
       const detail = emitUpdaterState({
         phase: "update_available",
         source: manual ? "manual" : "startup",
-        hidden: true,
+        hidden: !manual,
         currentVersion: update.currentVersion || currentVersion || null,
         availableVersion: update.version || null,
         statusText: `Update ${update.version} is available`,
-        detailText: "Downloading in the background…",
+        detailText: autoDownload ? "Downloading in the background…" : "Ready to download.",
         progressPercent: 0,
         error: null,
       });
@@ -652,6 +652,7 @@ export function setupTauriApi() {
     listInspirations: (params) => safeInvoke("list_inspirations", { params: params || {} }),
     listInspirationsHistory: (params) => safeInvoke("list_inspirations_history", { params: params || {} }),
     listCollections: () => safeInvoke("list_collections", {}),
+    fetchFreeCollectionsIndex: () => safeInvoke("fetch_free_collections_index", {}),
 
     getPreference: (key) => safeInvoke("get_preference", { key }),
     // Rust command signature: set_preference(payload: { key, value })
@@ -882,6 +883,11 @@ export function setupTauriApi() {
       safeInvoke("inspect_collection_pack", { packPath }),
     importCollectionPack: (packPath) =>
       safeInvoke("import_collection_pack", packPath ? { packPath } : {}),
+    downloadAndImportCollection: (collectionId, downloadUrl) =>
+      safeInvoke("download_and_import_collection", {
+        collectionId,
+        downloadUrl,
+      }),
     selectTelegramExportFolder: () => safeInvoke("select_telegram_export_folder", {}),
     inspectTelegramExport: (folderPath) => safeInvoke("inspect_telegram_export", { folderPath }),
     importTelegramExport: (payload) => safeInvoke("import_telegram_export", { payload: payload || {} }),
@@ -916,7 +922,8 @@ export function setupTauriApi() {
 
     /** Check for app updates (used by Settings -> Check for updates button). */
     checkForUpdates: (options = {}) =>
-      checkForUpdateMetadata({ manual: true, autoDownload: true, ...options }),
+      checkForUpdateMetadata({ manual: true, autoDownload: false, ...options }),
+    downloadUpdate: () => downloadUpdateInBackground({ manual: true }),
     installDownloadedUpdate: () => installDownloadedUpdate(),
     restartToApplyUpdate: () => restartToApplyUpdate(),
     dismissUpdatePrompt() {
@@ -955,6 +962,19 @@ export function setupTauriApi() {
     onCollectionPackExportProgress: (handler) => {
       if (typeof handler !== "function" || !tauriListen) return () => {};
       const promise = tauriListen("collection-pack-export-progress", (ev) => {
+        handler(ev?.payload || {});
+      });
+      return () => {
+        promise
+          .then((unlisten) => {
+            if (typeof unlisten === "function") unlisten();
+          })
+          .catch(() => {});
+      };
+    },
+    onCollectionProgress: (handler) => {
+      if (typeof handler !== "function" || !tauriListen) return () => {};
+      const promise = tauriListen("collection_progress", (ev) => {
         handler(ev?.payload || {});
       });
       return () => {
