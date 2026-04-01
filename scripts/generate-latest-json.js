@@ -165,7 +165,7 @@ if (process.platform === "win32") {
     process.exit(1);
   }
   const sigContent = fs.readFileSync(path.join(nsisDir, sigFile), "utf8").trim();
-  platforms.windows-x86_64 = {
+  platforms["windows-x86_64"] = {
     signature: sigContent,
     url: new URL(exeFile, `${validatedBaseUrl}/`).toString(),
   };
