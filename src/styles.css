@@ -827,21 +827,23 @@ html[data-theme="light"] .topbar__divider {
 
 .notification-trigger__badge {
   position: absolute;
-  top: 6px;
-  right: 7px;
+  /* Upper-right of the 16×16 bell (centered in 36×36 hit target) — not on the bell “stem” */
+  top: 9px;
+  right: 4px;
   width: 8px;
   height: 8px;
   min-width: 8px;
   padding: 0;
-  margin-right: 6px;
+  margin: 0;
   border-radius: 999px;
-  background: #8b5cf6;
+  background: var(--btn-primary-bg);
   color: transparent;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   line-height: 1;
   box-shadow: 0 0 0 1.5px var(--glass-bg);
+  pointer-events: none;
 }
 
 .notification-trigger__badge--pulse {

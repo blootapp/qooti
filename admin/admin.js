@@ -86,6 +86,7 @@ function switchTab(tab) {
   if (btn) btn.classList.add("is-active");
   if (panel) panel.classList.add("is-active");
   if (tab === "details" && detailsLicenseKey) loadDetails(detailsLicenseKey);
+  if (tab === "notifications") loadNotificationsSent();
 }
 
 function showDetails(key) {
@@ -274,11 +275,104 @@ document.getElementById("formNotification")?.addEventListener("submit", async (e
     document.getElementById("notifyButtonLink").value = "";
     document.getElementById("notifyActive").value = "true";
     setStatus("notifyStatus", "Notification sent.", "ok");
+    loadNotificationsSent();
   } catch (err) {
     setStatus("notifyStatus", err.message || "Failed", "err");
   } finally {
     if (btn) btn.disabled = false;
   }
+});
+
+// --- Sent notifications (server list + delete) ---
+function truncateText(s, max) {
+  const t = String(s || "");
+  if (t.length <= max) return t;
+  return t.slice(0, max - 1) + "…";
+}
+
+function loadNotificationsSent() {
+  setStatus("notificationsSentStatus", "Loading…", "muted");
+  adminFetch("/admin/notifications?include_inactive=1&limit=5")
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.error) throw new Error(data.error);
+      renderNotificationsSent(data.notifications || []);
+      setStatus("notificationsSentStatus", "", "muted");
+    })
+    .catch((e) => setStatus("notificationsSentStatus", e.message || "Failed", "err"));
+}
+
+function renderNotificationsSent(rows) {
+  const tbody = document.getElementById("notificationsSentBody");
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML =
+      '<tr><td colspan="5" class="table-empty">No notifications on the server yet.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows
+    .map((n) => {
+      const created = n.created_at != null ? formatTimestamp(Number(n.created_at)) : "—";
+      const title = escapeHtml(n.title || "—");
+      const body = escapeHtml(truncateText(n.body || "", 120));
+      const active = n.is_active ? "Yes" : "No";
+      const nid = escapeAttr(n.id);
+      return `<tr>
+        <td>${created}</td>
+        <td>${title}</td>
+        <td class="notifications-sent__body">${body}</td>
+        <td>${active}</td>
+        <td><button type="button" class="btn btn--small btn--danger" data-action="delete-notif" data-notif-id="${nid}">Delete</button></td>
+      </tr>`;
+    })
+    .join("");
+  tbody.querySelectorAll("[data-action='delete-notif']").forEach((btn) => {
+    btn.addEventListener("click", () =>
+      deleteNotificationById(btn.getAttribute("data-notif-id"))
+    );
+  });
+}
+
+function deleteNotificationById(id) {
+  if (!id) return;
+  if (
+    !confirm(
+      "Delete this notification from the server? It will disappear from users’ apps after their next sync."
+    )
+  ) {
+    return;
+  }
+  setStatus("notificationsSentStatus", "Deleting…", "muted");
+  adminFetch("/admin/notifications/" + encodeURIComponent(id), { method: "DELETE" })
+    .then(async (res) => {
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        /* non-JSON body */
+      }
+      if (!res.ok) {
+        const msg = data.error || res.statusText || "Failed";
+        if (res.status === 404) {
+          setStatus("notificationsSentStatus", "Already deleted on server. Refreshing list…", "muted");
+          loadNotificationsSent();
+          return { ok: true, alreadyDeleted: true };
+        }
+        throw new Error(msg);
+      }
+      return data;
+    })
+    .then(() => {
+      if (!document.getElementById("notificationsSentStatus")?.textContent?.includes("Already deleted")) {
+        setStatus("notificationsSentStatus", "Deleted.", "ok");
+        loadNotificationsSent();
+      }
+    })
+    .catch((e) => setStatus("notificationsSentStatus", e.message || "Failed", "err"));
+}
+
+document.getElementById("notificationsRefresh")?.addEventListener("click", () => {
+  loadNotificationsSent();
 });
 
 document.getElementById("createCopyKey")?.addEventListener("click", () => {

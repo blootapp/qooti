@@ -1,7 +1,7 @@
 /**
  * Qooti License Worker
  * App: POST /license/validate, GET /license/status
- * Admin: GET/POST/PATCH /admin/licenses, /admin/licenses/:key, /admin/logs, /admin/notifications
+ * Admin: GET/POST/PATCH /admin/licenses, /admin/licenses/:key, /admin/logs, /admin/notifications, DELETE /admin/notifications/:id
  * App: GET /app/notifications
  * Status derived at read time: valid = revoked_at IS NULL AND expires_at > now
  */
@@ -146,6 +146,10 @@ export default {
       }
       if (path === "/admin/logs" && request.method === "GET") {
         return listLogs(url.searchParams, env);
+      }
+      const matchNotifDelete = path.match(/^\/admin\/notifications\/([^/]+)\/?$/);
+      if (matchNotifDelete && request.method === "DELETE") {
+        return deleteNotification(decodeURIComponent(matchNotifDelete[1]), env);
       }
       if (path === "/admin/notifications" && request.method === "POST") {
         return createNotification(request, env);
@@ -740,6 +744,18 @@ async function createNotification(request, env) {
 
   await logAction(env, "notification_created", null, JSON.stringify({ id, isActive }));
   return json({ ok: true, id, created_at: createdAt });
+}
+
+async function deleteNotification(id, env) {
+  const sid = String(id || "").trim();
+  if (!sid) return json({ error: "invalid id" }, 400);
+  const existing = await env.DB.prepare("SELECT id FROM notifications WHERE id = ?")
+    .bind(sid)
+    .first();
+  if (!existing) return json({ error: "Not found" }, 404);
+  await env.DB.prepare("DELETE FROM notifications WHERE id = ?").bind(sid).run();
+  await logAction(env, "notification_deleted", null, JSON.stringify({ id: sid }));
+  return json({ ok: true, id: sid });
 }
 
 async function listNotifications(params, env, options = {}) {

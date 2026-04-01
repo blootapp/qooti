@@ -262,7 +262,7 @@ export function setupTauriApi() {
         url: currentUpdate.rawJson?.url || null,
       });
 
-      await currentUpdate.download((event) => {
+      const onProgress = (event) => {
         if (event.event === "Started") {
           totalBytes = Number(event.data?.contentLength || 0);
           updaterLog("download_progress_started", { totalBytes });
@@ -294,7 +294,56 @@ export function setupTauriApi() {
           return;
         }
         updaterLog("download_progress_finished", { downloadedBytes: downloaded, totalBytes });
-      }, { timeout: 120000 });
+      };
+
+      const downloadAttemptOptions = [
+        {
+          timeout: 600000,
+          headers: {
+            "Accept-Encoding": "identity",
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+        },
+        { timeout: 600000 },
+      ];
+
+      let downloadErr = null;
+      for (let i = 0; i < downloadAttemptOptions.length; i += 1) {
+        try {
+          updaterLog("download_attempt", {
+            attempt: i + 1,
+            timeoutMs: downloadAttemptOptions[i].timeout,
+          });
+          await currentUpdate.download(onProgress, downloadAttemptOptions[i]);
+          downloadErr = null;
+          break;
+        } catch (e) {
+          downloadErr = e;
+          const message = e?.message || String(e);
+          const retryable =
+            i < downloadAttemptOptions.length - 1 &&
+            /(decode|decoding|body|timeout|timed out|connection reset|incomplete|eof)/i.test(message);
+          updaterLog("download_attempt_failed", {
+            attempt: i + 1,
+            error: message,
+            retrying: retryable,
+          });
+          if (!retryable) throw e;
+          downloaded = 0;
+          totalBytes = 0;
+          emitUpdaterState({
+            phase: "downloading",
+            hidden: !manual && updaterState.source !== "manual",
+            statusText: `Retrying download for ${currentUpdate.version}…`,
+            detailText: "",
+            progressPercent: 0,
+            downloadedBytes: 0,
+            totalBytes: 0,
+          });
+        }
+      }
+      if (downloadErr) throw downloadErr;
 
       updaterLog("download_ready", {
         currentVersion: currentUpdate.currentVersion,
@@ -466,7 +515,14 @@ export function setupTauriApi() {
         manual,
       });
 
-      const update = await checkForUpdater({ timeout: 30000 });
+      const update = await checkForUpdater({
+        timeout: 60000,
+        headers: {
+          Accept: "application/json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
       if (!update) {
         updaterLog("check_no_update", {
           endpoint: UPDATER_ENDPOINT,
@@ -760,7 +816,10 @@ export function setupTauriApi() {
         "recognitionPath",
         "dictionaryPath",
       ];
-      const makeWebConfig = () => ({
+      const makeWebConfig = () => {
+        const ua = typeof navigator !== "undefined" ? String(navigator.userAgent || "") : "";
+        const isMacAppleWebKit = /Macintosh|Mac OS X/i.test(ua) && /AppleWebKit/i.test(ua);
+        return {
         base: webBase,
         workerUrl: `${webBase}ocr-index-worker.js`,
         ortScriptUrl: `${webBase}ort.wasm.min.js`,
@@ -776,8 +835,11 @@ export function setupTauriApi() {
         dictionaryPath: `${webBase}models/ppocr_keys_v1.txt`,
         wasmBase: webBase,
         source: "web",
-        preferMainThread: false,
-      });
+        // macOS WebKit worker contexts may not expose `Image` reliably.
+        // Prefer main-thread OCR there to avoid `Can't find variable: Image`.
+        preferMainThread: isMacAppleWebKit,
+      };
+      };
 
       const probeAssetUrl = async (url) => {
         try {

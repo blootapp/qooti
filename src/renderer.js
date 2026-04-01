@@ -588,6 +588,8 @@ async function resolveOcrCandidateSrc(candidate) {
 function shouldFallbackFromWorkerError(message) {
   const text = String(message || "");
   return /image is not defined/i.test(text)
+    || /can't find variable:\s*image/i.test(text)
+    || /referenceerror:\s*image/i.test(text)
     || /failed to construct 'worker'/i.test(text)
     || /cannot be accessed from origin/i.test(text)
     || /cross-origin/i.test(text)
@@ -10305,10 +10307,14 @@ function openSettingsTab(tab) {
 }
 
 function wireEvents() {
+  const isMac = /Mac|Darwin|Macintosh/i.test(navigator.userAgent || "");
+  /** Primary chord modifier: Command on macOS, Ctrl on Windows/Linux (for hidden shortcuts). */
+  const chordMod = (ev) => (isMac ? ev.metaKey : ev.ctrlKey);
+
   // Global paste handler
   document.addEventListener("paste", handleGlobalPaste);
 
-  // Keyboard sequence: Ctrl+B, then C opens DevTools.
+  // Keyboard sequence: Ctrl+B (Cmd+B on macOS), then C opens DevTools.
   let awaitingConsoleShortcut = false;
   let consoleShortcutTimer = null;
   document.addEventListener("keydown", (e) => {
@@ -10318,7 +10324,7 @@ function wireEvents() {
       e.stopPropagation();
       return;
     }
-    if (e.ctrlKey && !e.shiftKey && !e.altKey && key === "b") {
+    if (chordMod(e) && !e.shiftKey && !e.altKey && key === "b") {
       awaitingConsoleShortcut = true;
       if (consoleShortcutTimer) clearTimeout(consoleShortcutTimer);
       consoleShortcutTimer = setTimeout(() => {
@@ -10327,7 +10333,7 @@ function wireEvents() {
       }, 2500);
       return;
     }
-    if (awaitingConsoleShortcut && !e.ctrlKey && !e.shiftKey && !e.altKey && key === "c") {
+    if (awaitingConsoleShortcut && !chordMod(e) && !e.shiftKey && !e.altKey && key === "c") {
       awaitingConsoleShortcut = false;
       if (consoleShortcutTimer) clearTimeout(consoleShortcutTimer);
       consoleShortcutTimer = null;
@@ -11223,7 +11229,6 @@ function wireEvents() {
   });
 
   // Window controls (stop propagation so drag region doesn't capture).
-  const isMac = /Mac|Darwin|Macintosh/i.test(navigator.userAgent || "");
   document.body.classList.toggle("platform-macos", isMac);
 
   const controlsEl = document.querySelector(".window-controls");
@@ -11474,18 +11479,19 @@ function wireEvents() {
     }
   });
 
-  // Hidden OCR debug shortcut in media preview: Ctrl+B then T (or Ctrl+T while armed)
+  // Hidden OCR debug shortcut in media preview: Ctrl+B then T on Windows; Cmd+B then T on macOS (or Ctrl/Cmd+T while armed)
   document.addEventListener("keydown", (e) => {
     const mediaPreviewOpen = !$("#mediaPreview").classList.contains("hidden");
     if (!mediaPreviewOpen) return;
     const key = (e.key || "").toLowerCase();
-    if (e.ctrlKey && key === "b") {
+    if (chordMod(e) && key === "b") {
       ocrDebugChordArmedUntil = Date.now() + 1800;
       return;
     }
     if (key !== "t") return;
     const armed = Date.now() <= ocrDebugChordArmedUntil;
-    if (!armed && !e.ctrlKey) return;
+    const tChord = isMac ? e.metaKey : e.ctrlKey;
+    if (!armed && !tChord) return;
     e.preventDefault();
     e.stopPropagation();
     ocrDebugChordArmedUntil = 0;
@@ -11836,7 +11842,10 @@ async function boot() {
   }
   licenseLog("boot complete");
   if (window.qooti?.debug && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
-    console.log("[qooti] Tip: Run qooti.debug() in console (Ctrl+B, then C) for diagnostics");
+    const mac = /Mac|Darwin|Macintosh/i.test(navigator.userAgent || "");
+    console.log(
+      `[qooti] Tip: Run qooti.debug() in console (${mac ? "Cmd+B, then C" : "Ctrl+B, then C"}) for diagnostics`
+    );
   }
 }
 

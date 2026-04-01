@@ -119,6 +119,15 @@ body::before {
   color: var(--text);
 }
 
+.panel__title--section {
+  margin-top: 28px;
+}
+
+.notifications-sent__body {
+  max-width: 320px;
+  word-break: break-word;
+}
+
 .panel__toolbar {
   margin-bottom: 16px;
   display: flex;

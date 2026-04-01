@@ -136,6 +136,29 @@
         <button type="submit" id="btnSendNotification" class="btn btn--primary">Send notification</button>
       </form>
       <p id="notifyStatus" class="status"></p>
+
+      <h2 class="panel__title panel__title--section">Sent notifications</h2>
+      <p class="admin__hint">Deleting removes them from the server; user apps drop them on the next notification sync.</p>
+      <div class="panel__toolbar">
+        <button type="button" id="notificationsRefresh" class="btn btn--secondary">Refresh list</button>
+      </div>
+      <div class="table-wrap">
+        <table class="admin__table">
+          <thead>
+            <tr>
+              <th>Created</th>
+              <th>Title</th>
+              <th>Body</th>
+              <th>Active</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="notificationsSentBody">
+            <tr><td colspan="5" class="table-empty">Open this tab or click Refresh to load.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p id="notificationsSentStatus" class="status"></p>
     </section>
 
     <!-- Tab: License Details -->
