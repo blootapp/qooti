@@ -33,6 +33,27 @@ jobs:
           chmod +x src-tauri/resources/yt-dlp
           echo "Downloaded yt-dlp for macOS"
 
+      - name: Validate Apple certificate secret
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE secret is empty"
+            exit 1
+          fi
+          if [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
+            echo "APPLE_CERTIFICATE_PASSWORD secret is empty"
+            exit 1
+          fi
+          echo "$APPLE_CERTIFICATE" | tr -d '\r\n\t ' | base64 --decode > /tmp/apple_cert.p12
+          if [ ! -s /tmp/apple_cert.p12 ]; then
+            echo "Decoded Apple certificate is empty"
+            exit 1
+          fi
+          openssl pkcs12 -in /tmp/apple_cert.p12 -nokeys -passin pass:"$APPLE_CERTIFICATE_PASSWORD" >/dev/null
+
       - name: Install dependencies
         env:
           YOUTUBE_DL_SKIP_DOWNLOAD: "true"
@@ -42,6 +63,8 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         run: npm run tauri build -- --bundles app,dmg --config src-tauri/tauri.macos.conf.json
 
       - name: Upload macOS artifacts

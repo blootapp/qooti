@@ -11,6 +11,7 @@ env:
 jobs:
   release:
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: windows-latest
@@ -52,6 +53,28 @@ jobs:
             echo "Downloaded yt-dlp.exe for Windows"
           fi
 
+      - name: Validate Apple certificate secret
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          if [ -z "$APPLE_CERTIFICATE" ]; then
+            echo "APPLE_CERTIFICATE secret is empty"
+            exit 1
+          fi
+          if [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
+            echo "APPLE_CERTIFICATE_PASSWORD secret is empty"
+            exit 1
+          fi
+          echo "$APPLE_CERTIFICATE" | tr -d '\r\n\t ' | base64 --decode > /tmp/apple_cert.p12
+          if [ ! -s /tmp/apple_cert.p12 ]; then
+            echo "Decoded Apple certificate is empty"
+            exit 1
+          fi
+          openssl pkcs12 -in /tmp/apple_cert.p12 -nokeys -passin pass:"$APPLE_CERTIFICATE_PASSWORD" >/dev/null
+
       - name: Install dependencies
         env:
           YOUTUBE_DL_SKIP_DOWNLOAD: "true"
@@ -63,6 +86,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Qooti ${{ github.ref_name }}"
@@ -91,7 +116,7 @@ jobs:
 
       # Ad-hoc signing only when no Apple .p12 is configured; otherwise it would replace real signatures.
       - name: Ad-hoc sign macOS app
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
         run: |
           APP_PATH=$(find src-tauri/target -name "Qooti.app" -type d | head -n 1)
           if [ -z "$APP_PATH" ]; then
@@ -121,7 +146,7 @@ jobs:
           echo "Signing complete"
 
       - name: Ad-hoc sign macOS DMG
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && env.APPLE_CERTIFICATE == ''
         run: |
           DMG_PATH=$(find src-tauri/target -name "*.dmg" | head -n 1)
           if [ -z "$DMG_PATH" ]; then
