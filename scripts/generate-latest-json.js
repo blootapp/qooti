@@ -115,7 +115,16 @@ function addDarwinPlatformsFromBundleDir(macosDirAbs, validatedBase) {
   const sigContent = fs.readFileSync(sigPath, "utf8").trim();
   const platformUrl = new URL(tarGz, `${validatedBase}/`).toString();
   const lower = `${tarGz} ${abs}`.toLowerCase();
-  const isUniversal = lower.includes("universal");
+  let isUniversal = lower.includes("universal");
+  const tarMatches = files.filter((f) => f.endsWith(".app.tar.gz") && !f.endsWith(".sig"));
+  if (
+    !isUniversal &&
+    tarMatches.length === 1 &&
+    !/aarch64|arm64|x86_64|x64/i.test(tarGz)
+  ) {
+    // Tauri often emits Qooti.app.tar.gz (no arch in name) for universal-apple-darwin builds.
+    isUniversal = true;
+  }
 
   const addDarwin = (archSuffix) => {
     const base = `darwin-${archSuffix}`;
