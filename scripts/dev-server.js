@@ -133,6 +133,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Match production Tauri webroot: bundled `src/` is served at `/` so icons must be `/assets/...`
+  // (relative `assets/` would resolve to `/src/assets/...` when the page is `/src/index.html`).
+  if (p.startsWith("/assets/")) {
+    const rel = p.slice(1).replace(/\.\./g, "");
+    const filePath = path.resolve(SRC_ROOT, rel);
+    const resolvedSrc = path.resolve(SRC_ROOT);
+    if (!filePath.startsWith(resolvedSrc)) {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+    fs.readFile(filePath, (err, data) => {
+      if (err) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      res.setHeader("Content-Type", MIME[path.extname(filePath)] || "application/octet-stream");
+      res.end(data);
+    });
+    return;
+  }
+
   if (p.startsWith("/vault/")) {
     const rel = p.slice("/vault/".length).replace(/\.\./g, "");
     const filePath = path.resolve(vaultRoot, rel);

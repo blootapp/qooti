@@ -23,14 +23,36 @@ const TRAY_OPEN_ID: &str = "tray_open_qooti";
 const TRAY_NOTIFICATIONS_ID: &str = "tray_toggle_notifications_qooti";
 const TRAY_QUIT_ID: &str = "tray_quit_qooti";
 const PREF_TRAY_NOTIFICATIONS_ENABLED: &str = "trayNotificationsEnabled";
+#[cfg_attr(debug_assertions, allow(dead_code))]
 const PREF_LAUNCH_AT_LOGIN: &str = "launchAtLogin";
+#[cfg_attr(debug_assertions, allow(dead_code))]
+const PREF_AUTOSTART_BACKGROUND: &str = "autostartBackgroundMode";
 
 struct AppBackgroundState {
     allow_quit: AtomicBool,
     notifications_enabled: AtomicBool,
 }
 
+/// macOS: hide Dock icon when no visible window (tray-only); show Dock when a window is shown.
+#[cfg(target_os = "macos")]
+fn sync_macos_dock_visibility<R: tauri::Runtime>(app: &AppHandle<R>, window_visible: bool) {
+    use tauri::ActivationPolicy;
+    let policy = if window_visible {
+        ActivationPolicy::Regular
+    } else {
+        ActivationPolicy::Accessory
+    };
+    if let Err(e) = app.set_activation_policy(policy) {
+        log::warn!("[macos] set_activation_policy failed: {}", e);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+#[inline]
+fn sync_macos_dock_visibility<R: tauri::Runtime>(_app: &AppHandle<R>, _window_visible: bool) {}
+
 fn show_main_window<R: tauri::Runtime>(app: &AppHandle<R>) {
+    sync_macos_dock_visibility(app, true);
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -69,7 +91,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            Some(vec!["--autostart"]),
+            Some(vec!["--autostart", "--background"]),
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -101,23 +123,39 @@ pub fn run() {
             let db = Arc::new(database);
             write_vault_readme(&vault.root);
             let _ = commands::migrate_vault_filenames_to_uuid(&db, &vault);
-            let launch_at_login_enabled = read_pref_bool(&db, PREF_LAUNCH_AT_LOGIN, true);
-            match if launch_at_login_enabled {
-                app.autolaunch().enable()
-            } else {
-                app.autolaunch().disable()
-            } {
-                Ok(_) => {
-                    log::info!(
-                        "[autostart] startup state synced | enabled={}",
-                        launch_at_login_enabled
-                    );
+            // Debug builds embed devUrl (127.0.0.1:1421). If autostart ever registered the debug exe,
+            // boot would open that URL with no dev server → ERR_CONNECTION_REFUSED. Only release
+            // should register OS autostart; clear stale entries when running debug.
+            #[cfg(not(debug_assertions))]
+            {
+                let launch_at_login_enabled = read_pref_bool(&db, PREF_LAUNCH_AT_LOGIN, true);
+                match if launch_at_login_enabled {
+                    app.autolaunch().enable()
+                } else {
+                    app.autolaunch().disable()
+                } {
+                    Ok(_) => {
+                        log::info!(
+                            "[autostart] startup state synced | enabled={}",
+                            launch_at_login_enabled
+                        );
+                    }
+                    Err(err) => {
+                        log::warn!(
+                            "[autostart] failed to sync startup state | enabled={} | error={}",
+                            launch_at_login_enabled,
+                            err
+                        );
+                    }
                 }
-                Err(err) => {
-                    log::warn!(
-                        "[autostart] failed to sync startup state | enabled={} | error={}",
-                        launch_at_login_enabled,
-                        err
+            }
+            #[cfg(debug_assertions)]
+            {
+                if let Err(err) = app.autolaunch().disable() {
+                    log::warn!("[autostart] debug build: failed to clear OS autostart: {}", err);
+                } else {
+                    log::info!(
+                        "[autostart] debug build: OS autostart cleared (use installed app for launch at login)"
                     );
                 }
             }
@@ -198,6 +236,27 @@ pub fn run() {
             }
             tray_builder.build(app)?;
 
+            // Login autostart: optional silent background start (no window) — extension server already ran above.
+            let argv: Vec<String> = std::env::args().collect();
+            let launched_from_os_autostart = argv.iter().any(|a| a == "--autostart");
+            #[cfg(not(debug_assertions))]
+            let hide_on_autostart = launched_from_os_autostart
+                && read_pref_bool(&db, PREF_AUTOSTART_BACKGROUND, true);
+            #[cfg(debug_assertions)]
+            let hide_on_autostart = false;
+            if hide_on_autostart {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.hide();
+                    sync_macos_dock_visibility(app.handle(), false);
+                    log::info!(
+                        "[startup] autostart background mode — main window hidden (argv={:?})",
+                        argv
+                    );
+                }
+            } else if launched_from_os_autostart {
+                log::info!("[startup] autostart with window visible (user prefers window on login)");
+            }
+
             // Always enable logging for debugging "actions stop after first use" (logs to stderr / devtools)
             app.handle().plugin(
                 tauri_plugin_log::Builder::default()
@@ -255,6 +314,7 @@ pub fn run() {
                 if !app_state.allow_quit.load(Ordering::Relaxed) {
                     api.prevent_close();
                     let _ = window.hide();
+                    sync_macos_dock_visibility(window.app_handle(), false);
                 }
             }
         })

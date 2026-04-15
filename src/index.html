@@ -46,7 +46,7 @@
       <section id="bootView" class="boot-view" aria-label="Loading" aria-live="polite">
         <div class="boot-view__bg" aria-hidden="true"></div>
         <div class="boot-view__inner">
-          <img class="boot-view__logo" src="assets/logo.png" alt="" />
+          <img class="boot-view__logo" src="/assets/logo.png" alt="" />
           <p id="bootViewStatus" class="boot-view__status" data-i18n="boot.checkingLicense">Checking license…</p>
           <div class="boot-view__spinner" aria-hidden="true"></div>
         </div>
@@ -57,7 +57,7 @@
         <div class="license-view__bg" aria-hidden="true"></div>
         <div class="license-view__inner">
           <div class="license-view__brand">
-            <img class="license-view__logo" src="assets/logo.png" alt="" />
+            <img class="license-view__logo" src="/assets/logo.png" alt="" />
             <p id="licenseViewSubtitle" class="license-view__subtitle" data-i18n="license.enterKey">Enter your Bloot user ID to continue</p>
           </div>
           <form id="licenseForm" class="license-form" novalidate>
@@ -66,7 +66,7 @@
             <div class="license-form__actions">
               <button type="submit" id="licenseActivateBtn" class="license-form__submit">
                 <span class="license-form__submit-text" data-i18n="activation.submit">Activate</span>
-                <span class="ui-icon ui-icon--sm license-form__submit-arrow" style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon ui-icon--sm license-form__submit-arrow" style="--icon-url:url('/assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
               </button>
               <button type="button" id="licenseReactivateBtn" class="btn btn--primary license-form__reactivate hidden" data-i18n="license.reactivate">Reactivate license</button>
             </div>
@@ -76,7 +76,7 @@
             <p id="licenseConnectivityLoadingText" class="license-connectivity-state__loading" data-i18n="offline.checking">Checking...</p>
           </div>
           <div id="licenseOfflineGate" class="license-connectivity-state license-offline-gate hidden" aria-live="polite">
-            <span class="ui-icon license-offline-gate__icon" style="--icon-url:url('assets/icons/remix/wifi-off-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon license-offline-gate__icon" style="--icon-url:url('/assets/icons/remix/wifi-off-line.svg')" aria-hidden="true"></span>
             <div class="license-offline-gate__copy">
               <p id="licenseOfflineTitlePrimary" class="license-offline-gate__title">No internet connection</p>
               <p id="licenseOfflineTitleSecondary" class="license-offline-gate__title-sub">Internet aloqasi yo'q</p>
@@ -94,7 +94,7 @@
       <section id="surveyView" class="survey-view hidden" aria-label="Onboarding survey">
         <div class="survey-view__bg" aria-hidden="true"></div>
         <button type="button" id="surveyLangToggle" class="language-toggle survey-view__lang" title="Switch language" aria-label="Switch language">
-          <span class="ui-icon language-toggle__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+          <span class="ui-icon language-toggle__icon" style="--icon-url:url('/assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
         </button>
         <div class="survey-view__inner">
           <div id="surveySteps" class="survey-view__steps">
@@ -120,7 +120,7 @@
                       data-i18n-aria-label="survey.back"
                       aria-label="Back"
                     >
-                      <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                      <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
                     </button>
                     <span id="surveyProgress" class="survey-view__step-pill" aria-live="polite">1 / 5</span>
                   </div>
@@ -139,7 +139,7 @@
                       <span class="survey-view__next-label" data-i18n="survey.next">Next</span>
                       <span
                         class="ui-icon survey-view__next-icon"
-                        style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')"
+                        style="--icon-url:url('/assets/icons/remix/arrow-right-line.svg')"
                         aria-hidden="true"
                       ></span>
                     </button>
@@ -176,20 +176,20 @@
       <!-- Main Toolbar -->
       <header class="topbar">
         <div class="topbar__left">
-          <button id="btnMenu" class="btn-icon" data-i18n-title="menu.menu" title="Menu"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/menu-line.svg')" aria-hidden="true"></span></button>
-          <img class="brand__logo" src="assets/logo.png" alt="qooti" />
+          <button id="btnMenu" class="btn-icon" data-i18n-title="menu.menu" title="Menu"><span class="ui-icon" style="--icon-url:url('/assets/icons/remix/menu-line.svg')" aria-hidden="true"></span></button>
+          <img class="brand__logo" src="/assets/logo.png" alt="qooti" />
         </div>
 
         <div class="topbar__center">
           <div class="search" id="searchContainer">
             <div class="search__wrapper">
               <button id="btnColorFilter" class="search__color-trigger" type="button" data-i18n-title="topbar.filterByColor" title="Filter by color" data-i18n-aria-label="topbar.filterByColor" aria-label="Filter by color" aria-haspopup="dialog" aria-expanded="false">
-                <span id="colorFilterIcon" class="search__color-icon ui-icon" style="--icon-url:url('assets/icons/remix/palette.svg')" aria-hidden="true"></span>
+                <span id="colorFilterIcon" class="search__color-icon ui-icon" style="--icon-url:url('/assets/icons/remix/palette.svg')" aria-hidden="true"></span>
                 <span id="colorFilterSwatch" class="search__color-swatch hidden" aria-hidden="true"></span>
               </button>
               <input id="searchInput" class="search__input" type="text" data-i18n-placeholder="topbar.search" placeholder="Search…" spellcheck="false" autocomplete="off" />
               <button id="searchDownloadBtn" class="search__download-btn hidden" title="Download video and save to qooti" aria-label="Download video">
-                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
                 Download
               </button>
             </div>
@@ -197,14 +197,14 @@
         </div>
 
         <div class="topbar__right">
-          <button id="btnAdd" class="btn-icon" data-i18n-title="topbar.add" title="Add" data-i18n-aria-label="topbar.add" aria-label="Add"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/add-line.svg')" aria-hidden="true"></span></button>
+          <button id="btnAdd" class="btn-icon" data-i18n-title="topbar.add" title="Add" data-i18n-aria-label="topbar.add" aria-label="Add"><span class="ui-icon" style="--icon-url:url('/assets/icons/remix/add-line.svg')" aria-hidden="true"></span></button>
           <div class="collections-trigger-wrap" id="collectionsTriggerWrap">
             <button id="btnNavCollections" class="btn-icon collections-trigger" type="button" data-i18n-title="menu.collections" title="Collections" data-i18n-aria-label="menu.collections" aria-label="Collections" aria-haspopup="menu" aria-expanded="false">
-              <span class="ui-icon" style="--icon-url:url('assets/icons/remix/bookmark.svg')" aria-hidden="true"></span>
+              <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/bookmark.svg')" aria-hidden="true"></span>
             </button>
           </div>
           <button id="btnNotifications" class="btn-icon notification-trigger" data-i18n-title="topbar.notifications" title="Notifications" data-i18n-aria-label="topbar.notifications" aria-label="Notifications" aria-haspopup="menu" aria-expanded="false">
-            <span id="btnNotificationsIcon" class="ui-icon" style="--icon-url:url('assets/icons/remix/bell.svg')" aria-hidden="true"></span>
+            <span id="btnNotificationsIcon" class="ui-icon" style="--icon-url:url('/assets/icons/remix/bell.svg')" aria-hidden="true"></span>
             <span id="btnNotificationsBadge" class="notification-trigger__badge hidden" aria-hidden="true">0</span>
           </button>
           <span class="topbar__divider" aria-hidden="true"></span>
@@ -216,16 +216,16 @@
 
       <!-- Menu dropdown (hidden by default) -->
       <div id="menuDropdown" class="dropdown hidden">
-        <button id="menuNavAll" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/shuffle-line.svg')" aria-hidden="true"></span><span data-i18n="menu.shuffleOrder">Shuffle order</span></button>
+        <button id="menuNavAll" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/shuffle-line.svg')" aria-hidden="true"></span><span data-i18n="menu.shuffleOrder">Shuffle order</span></button>
         <div class="dropdown__divider"></div>
-        <button id="menuCollections" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/bookmark.svg')" aria-hidden="true"></span><span data-i18n="menu.collections">Collections</span></button>
+        <button id="menuCollections" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/bookmark.svg')" aria-hidden="true"></span><span data-i18n="menu.collections">Collections</span></button>
         <div class="dropdown__divider"></div>
-        <button id="menuStore" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/shopping-bag-fill.svg')" aria-hidden="true"></span><span data-i18n="store.title">Store</span></button>
+        <button id="menuStore" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/shopping-bag-fill.svg')" aria-hidden="true"></span><span data-i18n="store.title">Store</span></button>
         <div class="dropdown__divider"></div>
-        <button id="menuMigrateTelegram" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/telegram.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateTelegram">Migrate from Telegram</span></button>
-        <button id="menuMigrateNotion" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateNotion">Migrate from Notion</span></button>
+        <button id="menuMigrateTelegram" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/telegram.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateTelegram">Migrate from Telegram</span></button>
+        <button id="menuMigrateNotion" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateNotion">Migrate from Notion</span></button>
         <div class="dropdown__divider"></div>
-        <button id="menuHistory" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/history-line.svg')" aria-hidden="true"></span><span data-i18n="menu.history">History</span></button>
+        <button id="menuHistory" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/history-line.svg')" aria-hidden="true"></span><span data-i18n="menu.history">History</span></button>
       </div>
 
       <div id="colorPickerPopover" class="color-picker-popover hidden" role="dialog" data-i18n-aria-label="colorPicker.chooseColor" aria-label="Choose color">
@@ -240,7 +240,7 @@
             <input type="text" id="colorPickerHex" class="color-picker-hex" value="#ff0000" spellcheck="false" aria-label="Hex color" />
           </div>
           <button type="button" id="colorPickerCopyBtn" class="color-picker-copy-btn" aria-label="Copy hex color" title="Copy hex color">
-            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
           </button>
         </div>
         <div class="color-picker-section-label" data-i18n="colorPicker.hue">Hue</div>
@@ -272,17 +272,17 @@
           </div>
         </div>
         <div class="dropdown__divider"></div>
-        <button id="profileTabAccount" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/user-line.svg')" aria-hidden="true"></span><span data-i18n="profile.account">Account</span></button>
-        <button id="profileTabAppearance" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span><span data-i18n="profile.appearance">Appearance</span></button>
-        <button id="profileTabConnections" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.connections">Connections</span></button>
-        <button id="profileTabDownloads" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.downloads">Downloads</span></button>
-        <button id="profileTabDiscovery" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.discovery">Discovery</span></button>
-        <button id="profileTabTags" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.tags">Tags</span></button>
-        <button id="profileTabLanguage" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span><span data-i18n="profile.language">Language</span></button>
-        <button id="profileTabLicense" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="profile.license">Update</span></button>
-        <button id="profileTabHelp" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span><span data-i18n="profile.tutorials">Tutorials</span></button>
+        <button id="profileTabAccount" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/user-line.svg')" aria-hidden="true"></span><span data-i18n="profile.account">Account</span></button>
+        <button id="profileTabAppearance" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span><span data-i18n="profile.appearance">Appearance</span></button>
+        <button id="profileTabConnections" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.connections">Connections</span></button>
+        <button id="profileTabDownloads" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.downloads">Downloads</span></button>
+        <button id="profileTabDiscovery" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.discovery">Discovery</span></button>
+        <button id="profileTabTags" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span><span data-i18n="profile.tags">Tags</span></button>
+        <button id="profileTabLanguage" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/translate-2.svg')" aria-hidden="true"></span><span data-i18n="profile.language">Language</span></button>
+        <button id="profileTabLicense" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="profile.license">Update</span></button>
+        <button id="profileTabHelp" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span><span data-i18n="profile.tutorials">Tutorials</span></button>
         <div class="dropdown__divider"></div>
-        <button id="profileSendFeedback" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.support">Support</span></button>
+        <button id="profileSendFeedback" class="dropdown__item" role="menuitem"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('/assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span><span data-i18n="profile.support">Support</span></button>
       </div>
 
       <div id="notificationDropdown" class="dropdown dropdown--notifications hidden" role="menu" aria-label="Notifications">
@@ -301,7 +301,7 @@
         <div class="add-surface__backdrop"></div>
         <div class="add-surface__content">
           <button id="addSurfaceClose" class="add-surface__close" data-i18n-title="add.close" title="Close" data-i18n-aria-label="add.close" aria-label="Close">
-            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
           </button>
           <!-- Default zone (drop/paste) -->
           <div class="add-surface__zone" id="addZone">
@@ -312,7 +312,7 @@
               <div class="add-surface__import-title" data-i18n="add.importOptions">Import options</div>
               <div class="add-surface__import-actions">
                 <button id="addImportMediaBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--media" aria-hidden="true"></span><span data-i18n="add.importMedia">Import media files</span></button>
-                <button id="addImportQootiBtn" type="button" class="btn btn--secondary add-surface__import-btn"><img src="assets/icons/iconsolo.png" class="add-surface__import-icon add-surface__import-icon--qooti" aria-hidden="true" alt="" /><span data-i18n="add.importQooti">Import .qooti package</span></button>
+                <button id="addImportQootiBtn" type="button" class="btn btn--secondary add-surface__import-btn"><img src="/assets/icons/iconsolo.png" class="add-surface__import-icon add-surface__import-icon--qooti" aria-hidden="true" alt="" /><span data-i18n="add.importQooti">Import .qooti package</span></button>
                 <button id="addImportTelegramBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--telegram" aria-hidden="true"></span><span data-i18n="add.importTelegram">Import Telegram export</span></button>
                 <button id="addImportNotionBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--notion" aria-hidden="true"></span><span data-i18n="add.importNotion">Import from Notion</span></button>
               </div>
@@ -333,7 +333,7 @@
               <div class="add-surface__source-row">
                 <span id="previewSource" class="add-surface__source"></span>
                 <button type="button" id="previewCopyLink" class="add-surface__copy-link" data-i18n-title="add.copyLink" title="Copy link" data-i18n-aria-label="add.copyLink" aria-label="Copy link">
-                  <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+                  <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
                 </button>
               </div>
             </div>
@@ -363,15 +363,15 @@
           <!-- Selection action bar (hidden by default, appears on selection) -->
           <div id="selectionBar" class="selection-bar hidden">
             <span id="selectionCount" class="selection-bar__count"></span>
-            <button id="btnAddToCollection" class="btn-icon" data-i18n-title="selection.addToCollection" title="Add to collection"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span></button>
-            <button id="btnDeleteSelected" class="btn-icon btn-icon--danger" data-i18n-title="selection.delete" title="Delete"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/delete-bin-6-line.svg')" aria-hidden="true"></span></button>
-            <button id="btnClearSelection" class="btn-icon" data-i18n-title="selection.clearSelection" title="Clear selection"><span class="ui-icon" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span></button>
+            <button id="btnAddToCollection" class="btn-icon" data-i18n-title="selection.addToCollection" title="Add to collection"><span class="ui-icon" style="--icon-url:url('/assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span></button>
+            <button id="btnDeleteSelected" class="btn-icon btn-icon--danger" data-i18n-title="selection.delete" title="Delete"><span class="ui-icon" style="--icon-url:url('/assets/icons/remix/delete-bin-6-line.svg')" aria-hidden="true"></span></button>
+            <button id="btnClearSelection" class="btn-icon" data-i18n-title="selection.clearSelection" title="Clear selection"><span class="ui-icon" style="--icon-url:url('/assets/icons/remix/close-line.svg')" aria-hidden="true"></span></button>
           </div>
 
           <!-- Collection view bar: back + breadcrumb when viewing a single collection -->
           <div id="collectionViewBar" class="collection-view-bar hidden" aria-label="Collection navigation">
             <button type="button" id="btnBackFromCollection" class="collection-view-bar__back" data-i18n-title="collectionNav.backToCollections" title="Back to Collections" data-i18n-aria-label="collectionNav.backToCollections" aria-label="Back to Collections">
-              <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
             </button>
             <div class="collection-view-bar__breadcrumb">
               <span id="collectionViewBarCollectionsLink" class="collection-view-bar__segment" role="button" tabindex="0" data-i18n-title="collectionNav.backToCollections" title="Back to Collections" data-i18n="collectionNav.collections">Collections</span>
@@ -418,7 +418,7 @@
           <section id="historyView" class="history-view hidden" aria-label="History">
             <header class="history-header">
               <button id="btnBackFromHistory" class="history-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <div class="history-header__main">
                 <h1 class="history-header__title" data-i18n="history.title">History</h1>
@@ -430,7 +430,7 @@
                   <input type="hidden" id="historyFilter" value="all" />
                   <button type="button" id="historyFilterTrigger" class="history-header__filter-trigger" data-i18n-aria-label="history.filterBySource" aria-label="Filter by source" aria-haspopup="listbox" aria-expanded="false" aria-controls="historyFilterDropdown">
                     <span class="history-header__filter-label" data-i18n="history.allSources">All sources</span>
-                    <span class="ui-icon ui-icon--sm history-header__filter-chevron" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm history-header__filter-chevron" style="--icon-url:url('/assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
                   </button>
                   <div id="historyFilterDropdown" class="history-header__filter-dropdown" role="listbox" aria-hidden="true" tabindex="-1">
                     <button type="button" role="option" data-value="all">All sources</button>
@@ -453,7 +453,7 @@
           <section id="collectionsView" class="collections-view hidden" aria-label="Collections">
             <header class="collections-header">
               <button id="btnBackFromCollections" class="collections-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <div class="collections-header__main">
                 <h1 class="collections-header__title" data-i18n="collectionsView.title">Collections</h1>
@@ -477,7 +477,7 @@
           <section id="storeView" class="store-view hidden" aria-label="Store">
             <header class="store-header">
               <button id="btnBackFromStore" class="store-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <div class="store-header__main">
                 <h1 class="store-header__title" data-i18n="store.title">Store</h1>
@@ -486,7 +486,7 @@
               <div class="store-header__meta">
                 <span id="storeCount" class="store-header__count" aria-live="polite"></span>
                 <label class="store-header__search-wrap" for="storeSearch">
-                  <span class="ui-icon store-header__search-icon" style="--icon-url:url('assets/icons/remix/search-line.svg')" aria-hidden="true"></span>
+                  <span class="ui-icon store-header__search-icon" style="--icon-url:url('/assets/icons/remix/search-line.svg')" aria-hidden="true"></span>
                   <input
                     type="search"
                     id="storeSearch"
@@ -524,9 +524,9 @@
             <footer id="storeOnboardingCta" class="store-onboarding-cta hidden">
               <div id="storeOnboardingLangWrap" class="store-onboarding-lang-wrap">
                 <button id="storeOnboardingLangToggle" type="button" class="store-onboarding-lang-btn language-toggle" data-i18n-title="language.toggle" data-i18n-aria-label="language.toggle" title="Toggle language" aria-label="Toggle language" aria-expanded="false" aria-haspopup="menu">
-                  <span class="ui-icon store-onboarding-lang-btn__globe" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+                  <span class="ui-icon store-onboarding-lang-btn__globe" style="--icon-url:url('/assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
                   <span id="storeOnboardingLangCode" class="store-onboarding-lang-btn__code">EN</span>
-                  <span class="ui-icon store-onboarding-lang-btn__chevron" style="--icon-url:url('assets/icons/remix/arrow-down-s-line.svg')" aria-hidden="true"></span>
+                  <span class="ui-icon store-onboarding-lang-btn__chevron" style="--icon-url:url('/assets/icons/remix/arrow-down-s-line.svg')" aria-hidden="true"></span>
                 </button>
                 <div id="storeOnboardingLangMenu" class="store-onboarding-lang-menu hidden" role="menu" aria-label="Language options">
                   <button type="button" class="store-onboarding-lang-option" data-lang="en" role="menuitemradio" aria-checked="true">
@@ -545,7 +545,7 @@
                 </div>
                 <button id="storeOnboardingStartBtn" type="button" class="store-onboarding-cta__btn btn btn--primary is-disabled" disabled>
                   <span class="store-onboarding-cta__btn-label" data-i18n="store.getStarted">Get started</span>
-                  <span class="ui-icon store-onboarding-cta__btn-arrow" style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
+                  <span class="ui-icon store-onboarding-cta__btn-arrow" style="--icon-url:url('/assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
                 </button>
               </div>
             </footer>
@@ -554,7 +554,7 @@
           <section id="telegramMigrationView" class="telegram-migration-view hidden" aria-label="Migrate from Telegram">
             <header class="telegram-migration-header">
               <button id="btnBackFromTelegramMigration" class="telegram-migration-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <div class="telegram-migration-header__main">
                 <h1 class="telegram-migration-header__title" data-i18n="telegram.title">Migrate from Telegram</h1>
@@ -567,7 +567,7 @@
           <section id="notionImportView" class="telegram-migration-view hidden" aria-label="Import from Notion">
             <header class="telegram-migration-header">
               <button id="btnBackFromNotionImport" class="telegram-migration-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <div class="telegram-migration-header__main">
                 <h1 class="telegram-migration-header__title" data-i18n="notion.title">Import from Notion</h1>
@@ -580,7 +580,7 @@
           <section id="settingsView" class="settings-view hidden">
             <header class="settings-header">
               <button id="btnBackFromSettings" class="settings-header__back" data-i18n-title="settings.back" title="Back (Esc)" data-i18n-aria-label="common.back" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <h1 class="settings-header__title" data-i18n="settings.title">Settings</h1>
             </header>
@@ -588,43 +588,43 @@
               <div class="settings-surface">
                 <nav class="settings-nav" role="tablist" data-i18n-aria-label="settings.sectionsLabel" aria-label="Settings sections">
                   <button type="button" class="settings-nav__item is-active" data-tab="account" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/user-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/user-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.account">Account</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="appearance" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/layout-4-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.appearance">Appearance</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="connections" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/plug-2-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.connections">Connections</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="downloads" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/download-2-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.downloads">Downloads</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="discovery" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/compass-3-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.discovery">Discovery</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="tags" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/price-tag-3-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.tags">Tags</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="language" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.language">Language</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="others" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.others">Others</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="license" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.license">Update</span>
                   </button>
                   <button type="button" class="settings-nav__item" data-tab="help" role="tab">
-                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('/assets/icons/remix/book-ai-fill.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.help">Tutorials</span>
                   </button>
                 </nav>
@@ -667,7 +667,7 @@
                           <option value="dark" data-i18n="settings.theme.dark">Dark</option>
                         </select>
                         <span id="settingThemeLightLocked" class="settings-theme-locked" title="Light mode is locked for now" aria-hidden="true">
-                          <span class="ui-icon ui-icon--sm settings-theme-locked__icon" style="--icon-url:url('assets/icons/remix/git-repository-private-fill.svg')" aria-hidden="true"></span>
+                          <span class="ui-icon ui-icon--sm settings-theme-locked__icon" style="--icon-url:url('/assets/icons/remix/git-repository-private-fill.svg')" aria-hidden="true"></span>
                           <span data-i18n="settings.theme.lightLocked">Light (locked)</span>
                         </span>
                       </div>
@@ -847,7 +847,7 @@
                 </div>
                 <div id="settingsPanelOthers" class="settings-panel" role="tabpanel">
                   <h2 class="settings-panel__title">
-                    <span class="ui-icon settings-panel__title-icon" style="--icon-url:url('assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
+                    <span class="ui-icon settings-panel__title-icon" style="--icon-url:url('/assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
                     <span data-i18n="settings.panel.others">Others</span>
                   </h2>
                   <div class="settings-group">
@@ -858,10 +858,22 @@
                       </div>
                       <label class="settings-toggle-wrap"><input type="checkbox" id="settingLaunchAtLogin" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
                     </div>
+                    <div id="autostartModeGroup" class="settings-field settings-field--stacked settings-autostart-mode hidden" role="group" data-i18n-aria-label="settings.autostartDeviceTitle" aria-label="On device startup">
+                      <span class="settings-field__label" data-i18n="settings.autostartDeviceTitle">On device startup</span>
+                      <p class="settings-license__hint" data-i18n="settings.autostartModeHint">When Qooti starts at login, choose background (tray only) or open the window.</p>
+                      <label class="settings-autostart-mode__option">
+                        <input type="radio" name="autostartStartupMode" id="settingAutostartModeBackground" value="background" checked />
+                        <span data-i18n="settings.autostartBackground">Run in the background (recommended)</span>
+                      </label>
+                      <label class="settings-autostart-mode__option">
+                        <input type="radio" name="autostartStartupMode" id="settingAutostartModeWindow" value="window" />
+                        <span data-i18n="settings.autostartShowWindow">Open the app window</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
                 <div id="settingsPanelLicense" class="settings-panel" role="tabpanel">
-                  <h2 class="settings-panel__title"><span class="ui-icon settings-panel__title-icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="settings.panel.license">Update</span></h2>
+                  <h2 class="settings-panel__title"><span class="ui-icon settings-panel__title-icon" style="--icon-url:url('/assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span><span data-i18n="settings.panel.license">Update</span></h2>
                   <div class="settings-group">
                     <div class="settings-update-card">
                       <div class="settings-update-card__body">
@@ -887,7 +899,7 @@
                       </div>
                     </div>
                     <div class="settings-coming__content">
-                      <span class="ui-icon settings-coming__icon" style="--icon-url:url('assets/icons/remix/eye-off-line.svg')" aria-hidden="true"></span>
+                      <span class="ui-icon settings-coming__icon" style="--icon-url:url('/assets/icons/remix/eye-off-line.svg')" aria-hidden="true"></span>
                       <div class="settings-coming__title" data-i18n="settings.tutorialsComing">Coming</div>
                     </div>
                   </div>
@@ -900,7 +912,7 @@
           <section id="historyView" class="history-view hidden" aria-label="History">
             <header class="history-header">
               <button id="btnBackFromHistory" class="history-header__back" title="Back (Esc)" aria-label="Back">
-                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
               </button>
               <h1 class="history-header__title" data-i18n="history.title">History</h1>
             </header>
@@ -932,7 +944,7 @@
     <!-- Drop overlay: centered drop target, shown when dragging files -->
     <div id="dropOverlay" class="drop-overlay hidden" aria-hidden="true">
       <div class="drop-overlay__target">
-        <span class="ui-icon drop-overlay__icon" style="--icon-url:url('assets/icons/remix/upload-2-line.svg')" aria-hidden="true"></span>
+        <span class="ui-icon drop-overlay__icon" style="--icon-url:url('/assets/icons/remix/upload-2-line.svg')" aria-hidden="true"></span>
         <span class="drop-overlay__text" id="dropOverlayText" data-i18n="drop.dropToAdd">Drop to add to qooti</span>
       </div>
     </div>
@@ -969,11 +981,11 @@
       </div>
       <div class="download-indicator__dl-actions hidden" id="downloadIndicatorActions" aria-hidden="true">
         <button type="button" class="download-indicator__icon-btn" id="downloadIndicatorPauseBtn" aria-label="Pause">
-          <img id="downloadIndicatorPauseImg" src="assets/icons/player/pause-icon.svg" alt="" />
-          <img class="hidden" src="assets/icons/player/play-icon.svg" alt="" id="downloadIndicatorPlayImg" />
+          <img id="downloadIndicatorPauseImg" src="/assets/icons/player/pause-icon.svg" alt="" />
+          <img class="hidden" src="/assets/icons/player/play-icon.svg" alt="" id="downloadIndicatorPlayImg" />
         </button>
         <button type="button" class="download-indicator__icon-btn" id="downloadIndicatorCancelBtn" aria-label="Cancel">
-          <img src="assets/icons/player/close-circle-fill.svg" alt="" />
+          <img src="/assets/icons/player/close-circle-fill.svg" alt="" />
         </button>
       </div>
     </div>
@@ -1021,13 +1033,13 @@
           </div>
           <div class="media-preview__topbar-group media-preview__topbar-group--right">
             <button id="mediaPreviewClose" class="media-preview__top-btn" data-i18n-title="preview.closeEsc" title="Close (Esc)" data-i18n-aria-label="preview.close" aria-label="Close">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/close-line.svg')" aria-hidden="true"></span>
             </button>
           </div>
         </div>
         <div class="media-preview__canvas-wrap">
           <button type="button" id="mediaPreviewPrevSide" class="media-preview__nav-btn media-preview__nav-btn--left" data-i18n-title="preview.previous" title="Previous" data-i18n-aria-label="preview.previous" aria-label="Previous">
-            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
           </button>
           <div class="media-preview__hero" id="mediaPreviewArea">
             <div id="mediaPreviewExtracting" class="media-preview__extracting hidden">
@@ -1036,7 +1048,7 @@
             </div>
           </div>
           <button type="button" id="mediaPreviewNextSide" class="media-preview__nav-btn media-preview__nav-btn--right" data-i18n-title="preview.next" title="Next" data-i18n-aria-label="preview.next" aria-label="Next">
-            <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/arrow-right-s-line.svg')" aria-hidden="true"></span>
           </button>
           <div id="mediaPreviewVideoOverlay" class="media-preview__video-overlay hidden">
             <div id="mediaPreviewTimelineWrap" class="media-preview__timeline-wrap">
@@ -1048,12 +1060,12 @@
             </div>
             <div class="media-preview__video-controls-row">
               <button type="button" id="mediaPreviewPlayPause" class="media-preview__video-btn media-preview__video-btn--circle" data-i18n-title="preview.playPause" title="Play/Pause">
-                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/player/play-icon.svg')" aria-hidden="true"></span>
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/player/play-icon.svg')" aria-hidden="true"></span>
               </button>
               <span id="mediaPreviewTime" class="media-preview__video-time">0:00 / 0:00</span>
               <span class="media-preview__video-spacer"></span>
               <button type="button" id="mediaPreviewMute" class="media-preview__video-btn" data-i18n-title="preview.mute" title="Mute">
-                <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/player/volume-up-line.svg')" aria-hidden="true"></span>
+                <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/player/volume-up-line.svg')" aria-hidden="true"></span>
               </button>
               <div id="mediaPreviewVolumeWrap" class="media-preview__volume-wrap" data-i18n-title="preview.volume" title="Volume">
                 <div class="media-preview__volume-track">
@@ -1080,18 +1092,18 @@
           </div>
           <div class="media-preview__bar-right">
             <button type="button" class="media-preview__btn media-preview__btn--label" id="mediaPreviewCopy" data-i18n-title="preview.copy" title="Copy" data-i18n-aria-label="preview.copy" aria-label="Copy">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/file-copy-line.svg')" aria-hidden="true"></span>
               <span data-i18n="preview.copyShort">Nusxa</span>
             </button>
             <span class="media-preview__divider" aria-hidden="true"></span>
             <button type="button" class="media-preview__btn media-preview__btn--icon" id="mediaPreviewAddToCollection" data-i18n-title="preview.addToCollection" title="Add to collection" data-i18n-aria-label="preview.addToCollection" aria-label="Add to collection">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span>
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/folder-add-line.svg')" aria-hidden="true"></span>
             </button>
             <button type="button" class="media-preview__btn media-preview__btn--icon" id="mediaPreviewEditTags" data-i18n-title="preview.edit" title="Edit" data-i18n-aria-label="preview.edit" aria-label="Edit">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/pencil.svg')" aria-hidden="true"></span>
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/pencil.svg')" aria-hidden="true"></span>
             </button>
             <button type="button" class="media-preview__btn media-preview__btn--icon" id="mediaPreviewFindRelated" data-i18n-title="preview.findRelatedUz" title="O'xshashlarni topish" data-i18n-aria-label="preview.findRelated" aria-label="Find related">
-              <span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/bard-fill.svg')" aria-hidden="true"></span>
+              <span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/bard-fill.svg')" aria-hidden="true"></span>
             </button>
           </div>
         </div>
@@ -1105,7 +1117,7 @@
 
     <!-- Floating feedback button (always visible) -->
     <button id="feedbackFab" type="button" class="feedback-fab" data-i18n-title="feedback.sendFeedback" title="Send feedback" data-i18n-aria-label="feedback.sendFeedback" aria-label="Send feedback">
-      <span class="ui-icon feedback-fab__icon" style="--icon-url:url('assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span>
+      <span class="ui-icon feedback-fab__icon" style="--icon-url:url('/assets/icons/remix/customer-service-2-line.svg')" aria-hidden="true"></span>
     </button>
 
     <script src="./vendor/konva.min.js"></script>

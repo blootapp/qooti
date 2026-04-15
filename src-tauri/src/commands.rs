@@ -2684,16 +2684,24 @@ pub fn set_launch_at_login_enabled(
         rusqlite::params!["launchAtLogin", enabled_str],
     )
     .map_err(|e| e.to_string())?;
-    if enabled {
-        app.autolaunch()
-            .enable()
-            .map_err(|e| format!("Autostart yoqilmadi: {}", e))?;
-    } else {
-        app.autolaunch()
-            .disable()
-            .map_err(|e| format!("Autostart o'chmadi: {}", e))?;
+    #[cfg(debug_assertions)]
+    {
+        let _ = app.autolaunch().disable();
+        return Ok(());
     }
-    Ok(())
+    #[cfg(not(debug_assertions))]
+    {
+        if enabled {
+            app.autolaunch()
+                .enable()
+                .map_err(|e| format!("Autostart yoqilmadi: {}", e))?;
+        } else {
+            app.autolaunch()
+                .disable()
+                .map_err(|e| format!("Autostart o'chmadi: {}", e))?;
+        }
+        Ok(())
+    }
 }
 
 // ---------- Onboarding survey ----------
@@ -4302,6 +4310,7 @@ fn setting_default(key: &str) -> Option<&'static str> {
         "storeInstalledCollectionIds" => "[]",
         "storeInstalledCollectionLinks" => "{}",
         "launchAtLogin" => "true",
+        "autostartBackgroundMode" => "true",
         "onboarding_completed" => "true",
         "confetti_shown" => "false",
         _ => return None,
@@ -4354,6 +4363,7 @@ pub fn get_settings(db: State<Arc<Db>>) -> Result<serde_json::Value, String> {
         "storeInstalledCollectionIds",
         "storeInstalledCollectionLinks",
         "launchAtLogin",
+        "autostartBackgroundMode",
         "onboarding_completed",
         "confetti_shown",
     ] {

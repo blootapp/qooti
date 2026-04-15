@@ -807,7 +807,7 @@ export function setupTauriApi() {
     copyTextToClipboard: (text) => safeInvoke("copy_text_to_clipboard", { text: String(text || "") }),
     async resolveOcrAssets() {
       const pageHref = typeof location !== "undefined" ? location.href : "";
-      const webBase = pageHref ? new URL("assets/ocr/", pageHref).toString() : "assets/ocr/";
+      const webBase = pageHref ? new URL("/assets/ocr/", pageHref).toString() : "/assets/ocr/";
       const REQUIRED_OCR_KEYS = [
         "workerUrl",
         "ortScriptUrl",

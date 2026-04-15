@@ -4011,18 +4011,18 @@ html[data-theme="light"] #tagFilterRecent.tag-filter-pill.is-active:hover {
 }
 
 .add-surface__import-icon--media {
-  mask-image: url("assets/icons/remix/image-line.svg");
-  -webkit-mask-image: url("assets/icons/remix/image-line.svg");
+  mask-image: url("/assets/icons/remix/image-line.svg");
+  -webkit-mask-image: url("/assets/icons/remix/image-line.svg");
 }
 
 .add-surface__import-icon--telegram {
-  mask-image: url("assets/icons/remix/telegram.svg");
-  -webkit-mask-image: url("assets/icons/remix/telegram.svg");
+  mask-image: url("/assets/icons/remix/telegram.svg");
+  -webkit-mask-image: url("/assets/icons/remix/telegram.svg");
 }
 
 .add-surface__import-icon--notion {
-  mask-image: url("assets/icons/remix/notion-fill.svg");
-  -webkit-mask-image: url("assets/icons/remix/notion-fill.svg");
+  mask-image: url("/assets/icons/remix/notion-fill.svg");
+  -webkit-mask-image: url("/assets/icons/remix/notion-fill.svg");
 }
 
 /* PNG icon — actual image, no mask */
@@ -9145,6 +9145,29 @@ html:not([data-theme="light"]) .survey-library__bar {
   flex: none;
   width: 100%;
   line-height: 1.35;
+}
+
+.settings-autostart-mode {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-autostart-mode__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1.4;
+  color: rgba(231, 234, 240, 0.92);
+}
+
+.settings-autostart-mode__option input {
+  margin-top: 3px;
+  flex-shrink: 0;
+  accent-color: var(--btn-primary-bg, #5b8cff);
 }
 
 .settings-field__control {

@@ -376,15 +376,15 @@ let notificationLastFetchedId = "";
 let notificationHasBeenViewed = false;
 let notificationLastUnreadCount = 0;
 
-const NOTIFICATION_ICON_BELL = "assets/icons/remix/bell.svg";
-const NOTIFICATION_ICON_BELL_DOT = "assets/icons/remix/bell-dot.svg";
-const NOTIFICATION_STATE_ICON_INFO = "assets/icons/remix/bell.svg";
-const NOTIFICATION_STATE_ICON_SUCCESS = "assets/icons/remix/checkbox-circle-line.svg";
-const NOTIFICATION_STATE_ICON_ERROR = "assets/icons/remix/close-line.svg";
+const NOTIFICATION_ICON_BELL = "/assets/icons/remix/bell.svg";
+const NOTIFICATION_ICON_BELL_DOT = "/assets/icons/remix/bell-dot.svg";
+const NOTIFICATION_STATE_ICON_INFO = "/assets/icons/remix/bell.svg";
+const NOTIFICATION_STATE_ICON_SUCCESS = "/assets/icons/remix/checkbox-circle-line.svg";
+const NOTIFICATION_STATE_ICON_ERROR = "/assets/icons/remix/close-line.svg";
 const NOTIFICATION_CACHE_KEY = "qooti.notifications.cache.v1";
 const NOTIFICATION_READ_KEY = "qooti.notifications.read.v1";
 const NOTIFICATION_LAST_ID_KEY = "qooti.notifications.lastId.v1";
-const TUTORIAL_VIDEOS_CONFIG_PATH = "assets/tutorial-videos.json";
+const TUTORIAL_VIDEOS_CONFIG_PATH = "/assets/tutorial-videos.json";
 let tutorialVideosConfigPromise = null;
 const OCR_INDEX_CONCURRENCY = 1;
 const OCR_INDEX_CLAIM_BATCH = 2;
@@ -556,8 +556,8 @@ let ocrAssetConfigPromise = null;
 
 function getOcrAssetBase() {
   return typeof window !== "undefined" && window.location?.href
-    ? new URL("assets/ocr/", window.location.href).toString()
-    : "assets/ocr/";
+    ? new URL("/assets/ocr/", window.location.href).toString()
+    : "/assets/ocr/";
 }
 
 async function getOcrAssetConfig() {
@@ -1466,6 +1466,12 @@ function syncSizeControlModeUi() {
   $("#settingsAdvancedSizeControls")?.classList.toggle("hidden", useSimple);
 }
 
+function syncAutostartStartupOptionsVisibility() {
+  const g = $("#autostartModeGroup");
+  const launch = $("#settingLaunchAtLogin");
+  if (g && launch) g.classList.toggle("hidden", !launch.checked);
+}
+
 async function loadSettingsFromBackend() {
   // If the bridge isn't ready yet, don't wipe settings to defaults.
   if (!window.qooti?.getSettings) return false;
@@ -1614,6 +1620,14 @@ function loadSettingsUI() {
   set("settingLanguage", s.language || "en");
   set("settingShowExtensionCollectionPicker", s.extensionShowCollectionPicker ?? "true");
   set("settingLaunchAtLogin", s.launchAtLogin ?? "true");
+  const autostartBgOn = (s.autostartBackgroundMode ?? "true") !== "false";
+  const rb = $("#settingAutostartModeBackground");
+  const rw = $("#settingAutostartModeWindow");
+  if (rb && rw) {
+    rb.checked = autostartBgOn;
+    rw.checked = !autostartBgOn;
+  }
+  syncAutostartStartupOptionsVisibility();
   updateProfileUi();
   syncSizeControlModeUi();
   applyUiScale();
@@ -2360,11 +2374,11 @@ const SURVEY_ROLE_TO_TAGS = {
 
 /** Option label → SVG for “How did you discover Qooti?” (single-select only). */
 const SURVEY_DISCOVERY_BRAND_ICONS = {
-  Telegram: "assets/socialmedia/telegram.svg",
-  Instagram: "assets/socialmedia/instagram.svg",
-  YouTube: "assets/socialmedia/youtube.svg",
-  "Friend / colleague": "assets/socialmedia/users-alt.svg",
-  Other: "assets/socialmedia/circle-ellipsis.svg",
+  Telegram: "/assets/socialmedia/telegram.svg",
+  Instagram: "/assets/socialmedia/instagram.svg",
+  YouTube: "/assets/socialmedia/youtube.svg",
+  "Friend / colleague": "/assets/socialmedia/users-alt.svg",
+  Other: "/assets/socialmedia/circle-ellipsis.svg",
 };
 
 function showSurveyView() {
@@ -3021,11 +3035,30 @@ function wireSettingsControls() {
       } else {
         await saveSetting("launchAtLogin", value);
       }
+      syncAutostartStartupOptionsVisibility();
     } catch (e) {
       console.warn("[qooti] set launchAtLogin failed:", e?.message || e);
       toggle.checked = !enabled;
       state.settings.launchAtLogin = toggle.checked ? "true" : "false";
+      syncAutostartStartupOptionsVisibility();
     }
+  });
+  const saveAutostartBgMode = async (background) => {
+    const v = background ? "true" : "false";
+    state.settings.autostartBackgroundMode = v;
+    try {
+      await saveSetting("autostartBackgroundMode", v);
+    } catch (e) {
+      console.warn("[qooti] set autostartBackgroundMode failed:", e?.message || e);
+    }
+  };
+  $("#settingAutostartModeBackground")?.addEventListener("change", async () => {
+    if (!$("#settingAutostartModeBackground")?.checked) return;
+    await saveAutostartBgMode(true);
+  });
+  $("#settingAutostartModeWindow")?.addEventListener("change", async () => {
+    if (!$("#settingAutostartModeWindow")?.checked) return;
+    await saveAutostartBgMode(false);
   });
   bind("settingDefaultClickBehavior", "defaultClickBehavior");
   bind("settingEnableContextMenu", "enableContextMenu");
@@ -3352,7 +3385,7 @@ function sourceType(it) {
 }
 
 function remixIcon(name, className = "ui-icon ui-icon--sm") {
-  return `<span class="${className}" style="--icon-url:url('assets/icons/remix/${name}')" aria-hidden="true"></span>`;
+  return `<span class="${className}" style="--icon-url:url('/assets/icons/remix/${name}')" aria-hidden="true"></span>`;
 }
 
 function getMediaPreviewPathToCopy(it) {
@@ -4129,7 +4162,7 @@ async function showFindSimilarModal(item) {
     <div class="app-modal__backdrop"></div>
     <div class="app-modal__dialog app-modal__dialog--wide">
       <div class="app-modal__header">
-        <h3 class="app-modal__title"><span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/bard-fill.svg');vertical-align:middle;margin-right:6px" aria-hidden="true"></span>Find related</h3>
+        <h3 class="app-modal__title"><span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/bard-fill.svg');vertical-align:middle;margin-right:6px" aria-hidden="true"></span>Find related</h3>
         <button type="button" class="app-modal__close" aria-label="Close">&times;</button>
       </div>
       <div class="app-modal__body">
@@ -8826,10 +8859,10 @@ function updateMediaPreviewVolumeIcon(btn, level, isMuted) {
   const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
   const iconUrl =
     isMuted || safeLevel <= 0.0001
-      ? "url('assets/icons/player/volume-mute-fill.svg')"
+      ? "url('/assets/icons/player/volume-mute-fill.svg')"
       : safeLevel <= 0.5
-        ? "url('assets/icons/player/volume-down-fill.svg')"
-        : "url('assets/icons/player/volume-up-line.svg')";
+        ? "url('/assets/icons/player/volume-down-fill.svg')"
+        : "url('/assets/icons/player/volume-up-line.svg')";
   setMediaPreviewButtonIcon(btn, iconUrl);
 }
 
@@ -8903,8 +8936,8 @@ function wireVideoInspector(video, _item) {
   overlay.classList.remove("hidden");
   setMediaPreviewDimensions(video.videoWidth, video.videoHeight);
 
-  const playIcon = "url('assets/icons/player/play-icon.svg')";
-  const pauseIcon = "url('assets/icons/player/pause-icon.svg')";
+  const playIcon = "url('/assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('/assets/icons/player/pause-icon.svg')";
   const setTimelineReady = (ready) => {
     if (!timelineWrap) return;
     timelineWrap.style.pointerEvents = ready ? "auto" : "none";
@@ -9152,8 +9185,8 @@ function wireYouTubeInspector(player) {
   overlay.classList.remove("hidden");
   setMediaPreviewDimensions(16, 9);
 
-  const playIcon = "url('assets/icons/player/play-icon.svg')";
-  const pauseIcon = "url('assets/icons/player/pause-icon.svg')";
+  const playIcon = "url('/assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('/assets/icons/player/pause-icon.svg')";
   const setTimelineReady = (ready) => {
     if (!timelineWrap) return;
     timelineWrap.style.pointerEvents = ready ? "auto" : "none";
@@ -10222,7 +10255,7 @@ function buildNotionImportBodyHTML() {
   return `
     <div class="header-row">
       <div class="notion-icon migration-modal-ref__icon">
-        <span class="ui-icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+        <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
       </div>
       <div>
         <div class="header-title">Import from Notion Export</div>
@@ -10311,7 +10344,7 @@ function buildNotionProgressHTML(statusText, current, total, percent, isModal = 
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">${escapeHtml(heading)}</div>
@@ -10399,7 +10432,7 @@ function buildNotionCountConfirmHTML(total, pageTitle) {
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">Ready to import</div>
@@ -10521,7 +10554,7 @@ function buildNotionSummaryHTML(imported, failed, skippedDuplicates, collectionN
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('assets/icons/remix/checkbox-circle-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/checkbox-circle-line.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">Done</div>
@@ -11308,7 +11341,7 @@ function wireEvents() {
     const emptyEl = $("#collectionsDropdownEmpty");
     if (!wrap || !dropdown || !listEl || !emptyEl) return;
     let openedByClick = false;
-    const folderIconUrl = "url('assets/icons/remix/folder-line.svg')";
+    const folderIconUrl = "url('/assets/icons/remix/folder-line.svg')";
     function renderCollectionsList() {
       const list = (state.collections || []).filter((c) => c.visible_on_home !== false);
       listEl.innerHTML = "";
@@ -11719,7 +11752,7 @@ function wireEvents() {
       addBtn.className = "color-picker-recent__add";
       addBtn.setAttribute("aria-label", "Save current color to recent");
       addBtn.title = "Save current color";
-      addBtn.innerHTML = `<span class="ui-icon ui-icon--sm" style="--icon-url:url('assets/icons/remix/add-line.svg')" aria-hidden="true"></span>`;
+      addBtn.innerHTML = `<span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/add-line.svg')" aria-hidden="true"></span>`;
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         pushRecentColor(currentHex());
