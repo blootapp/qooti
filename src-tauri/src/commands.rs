@@ -3,6 +3,7 @@ use crate::palette;
 use crate::tags;
 use crate::vault::VaultPaths;
 use base64::Engine;
+use hmac::{Hmac, Mac};
 use image::GenericImageView;
 use log::{debug, error, info, warn};
 
@@ -72,6 +73,15 @@ pub fn log_startup_session() {
         cfg!(debug_assertions)
     );
 }
+
+const STARTUP_DIAGNOSTICS_ENABLED: bool = true;
+
+fn startup_diag(stage: &str, detail: String) {
+    if !STARTUP_DIAGNOSTICS_ENABLED {
+        return;
+    }
+    info!("[startup-diag] {} | {}", stage, detail);
+}
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -88,6 +98,7 @@ use std::time::Duration;
 use tauri::{AppHandle, State};
 use tauri::{Emitter, Manager};
 use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_autostart::ManagerExt as _;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -131,7 +142,65 @@ pub struct FreeCollection {
     pub download_url: String,
     pub meta_url: String,
     pub preview_urls: Vec<String>,
+    #[serde(default)]
+    pub card_poster_url: Option<String>,
+    #[serde(default)]
+    pub banner_poster_url: Option<String>,
+    #[serde(default)]
+    pub preview_video_url: Option<String>,
+    #[serde(default)]
+    pub ad_mode: Option<String>,
+    #[serde(default)]
+    pub ad_image_url: Option<String>,
+    #[serde(default)]
+    pub ad_video_url: Option<String>,
+    #[serde(default)]
+    pub ad_title: Option<String>,
+    #[serde(default)]
+    pub ad_description: Option<String>,
+    #[serde(default)]
+    pub ad_button_title: Option<String>,
+    #[serde(default)]
+    pub ad_button_url: Option<String>,
     pub role_tags: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct StoreApplyBanner {
+    #[serde(default)]
+    pub poster_url: Option<String>,
+    #[serde(default)]
+    pub preview_video_url: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub button_title: Option<String>,
+    #[serde(default)]
+    pub button_url: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct StoreCommercialBanner {
+    #[serde(default)]
+    pub ad_mode: Option<String>,
+    #[serde(default)]
+    pub ad_image_url: Option<String>,
+    #[serde(default)]
+    pub ad_video_url: Option<String>,
+    #[serde(default)]
+    pub ad_title: Option<String>,
+    #[serde(default)]
+    pub ad_description: Option<String>,
+    #[serde(default)]
+    pub ad_button_title: Option<String>,
+    #[serde(default)]
+    pub ad_button_url: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -139,10 +208,15 @@ pub struct CollectionsIndex {
     pub version: String,
     pub updated_at: String,
     pub free: Vec<FreeCollection>,
+    #[serde(default)]
+    pub store_apply_banner: Option<StoreApplyBanner>,
+    #[serde(default)]
+    pub store_commercial_banner: Option<StoreCommercialBanner>,
 }
 
 const COLLECTIONS_INDEX_URL: &str =
     "https://raw.githubusercontent.com/blootapp/qooti-collections/main/index.json";
+const MAX_COLLECTION_DOWNLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct NotificationRow {
@@ -1728,18 +1802,42 @@ pub async fn download_and_import_collection(
     download_url: String,
 ) -> Result<serde_json::Value, String> {
     cmd_log!("download_and_import_collection");
+    let parsed_url = reqwest::Url::parse(download_url.trim())
+        .map_err(|_| "Noto'g'ri URL format".to_string())?;
+    let url_host = parsed_url.host_str().unwrap_or("").to_ascii_lowercase();
     info!(
-        "[download] command called | id={} | url={}",
-        collection_id, download_url
+        "[download] command called | id={} | host={}",
+        collection_id, url_host
     );
     info!("[download] step=validate_inputs | id={}", collection_id);
     if download_url.trim().is_empty() {
         error!("[download] empty download_url | id={}", collection_id);
         return Err("download_url bo'sh".to_string());
     }
-    if !download_url.starts_with("https://") {
-        error!("[download] invalid url | id={} | url={}", collection_id, download_url);
-        return Err(format!("Noto'g'ri URL: {}", download_url));
+    if parsed_url.scheme() != "https" {
+        error!(
+            "[download] invalid scheme | id={} | scheme={}",
+            collection_id,
+            parsed_url.scheme()
+        );
+        return Err("Noto'g'ri URL: faqat HTTPS qo'llab-quvvatlanadi".to_string());
+    }
+    let allowed_hosts = [
+        "github.com",
+        "raw.githubusercontent.com",
+        "objects.githubusercontent.com",
+        "githubusercontent.com",
+        "releases.githubusercontent.com",
+    ];
+    if !allowed_hosts
+        .iter()
+        .any(|h| url_host == *h || url_host.ends_with(&format!(".{}", h)))
+    {
+        error!(
+            "[download] host blocked | id={} | host={}",
+            collection_id, url_host
+        );
+        return Err("Noto'g'ri URL host: faqat rasmiy GitHub source ruxsat etilgan".to_string());
     }
     let start = std::time::Instant::now();
     let _ = app.emit(
@@ -1757,15 +1855,15 @@ pub async fn download_and_import_collection(
             format!("HTTP client xatosi: {}", e)
         })?;
 
-    info!("[download] step=send_get | id={} | url={}", collection_id, download_url);
+    info!("[download] step=send_get | id={} | host={}", collection_id, url_host);
     let response = client
         .get(download_url.clone())
         .send()
         .await
         .map_err(|e| {
             error!(
-                "[download] request failed | id={} | url={} | error={}",
-                collection_id, download_url, e
+                "[download] request failed | id={} | host={} | error={}",
+                collection_id, url_host, e
             );
             format!("Yuklab bo'lmadi: {}", e)
         })?;
@@ -1773,14 +1871,21 @@ pub async fn download_and_import_collection(
     info!("[download] response status | id={} | status={}", collection_id, status);
     if !status.is_success() {
         error!(
-            "[download] bad status | id={} | status={} | url={}",
+            "[download] bad status | id={} | status={} | host={}",
             collection_id,
             status,
-            download_url
+            url_host
         );
         return Err(format!("Server xatosi: {}", status));
     }
     let content_length = response.content_length().unwrap_or(0);
+    if content_length > MAX_COLLECTION_DOWNLOAD_BYTES as u64 {
+        error!(
+            "[download] size limit exceeded via content-length | id={} | host={} | bytes={}",
+            collection_id, url_host, content_length
+        );
+        return Err("Fayl juda katta: maksimal 64MB".to_string());
+    }
     info!(
         "[download] content_length | id={} | bytes={}",
         collection_id, content_length
@@ -1799,6 +1904,13 @@ pub async fn download_and_import_collection(
             format!("Baytlarni o'qishda xatolik: {}", e)
         })?
         .to_vec();
+    if bytes_vec.len() > MAX_COLLECTION_DOWNLOAD_BYTES {
+        error!(
+            "[download] size limit exceeded after download | id={} | host={} | bytes={}",
+            collection_id, url_host, bytes_vec.len()
+        );
+        return Err("Fayl juda katta: maksimal 64MB".to_string());
+    }
     info!(
         "[download] bytes received | id={} | size={}",
         collection_id,
@@ -1861,8 +1973,16 @@ pub async fn download_and_import_collection(
         let tmp_path = std::env::temp_dir().join(tmp_name);
         fs::write(&tmp_path, &bytes_vec).map_err(|e| format!("Temp write failed: {}", e))?;
         let conn = db_arc.conn();
-        let (cid, cname, imported, errors) = crate::pack::import_pack(&conn, &vault_arc.root, &tmp_path)?;
-        let _ = fs::remove_file(&tmp_path);
+        let import_outcome = crate::pack::import_pack(&conn, &vault_arc.root, &tmp_path);
+        if let Err(cleanup_err) = fs::remove_file(&tmp_path) {
+            warn!(
+                "[download] temp cleanup failed | id={} | path={} | error={}",
+                collection_id_for_tmp,
+                tmp_path.display(),
+                cleanup_err
+            );
+        }
+        let (cid, cname, imported, errors) = import_outcome?;
         info!("[import] complete | id={} | imported={}", cid, imported);
         Ok(serde_json::json!({
             "collectionId": cid,
@@ -2550,6 +2670,32 @@ pub fn set_preference(db: State<Arc<Db>>, payload: SetPreferencePayload) -> Resu
     Ok(())
 }
 
+#[tauri::command]
+pub fn set_launch_at_login_enabled(
+    app: AppHandle,
+    db: State<Arc<Db>>,
+    enabled: bool,
+) -> Result<(), String> {
+    cmd_log!("set_launch_at_login_enabled");
+    let enabled_str = if enabled { "true" } else { "false" };
+    let conn = db.conn();
+    conn.execute(
+        "INSERT OR REPLACE INTO preferences(key, value) VALUES (?, ?)",
+        rusqlite::params!["launchAtLogin", enabled_str],
+    )
+    .map_err(|e| e.to_string())?;
+    if enabled {
+        app.autolaunch()
+            .enable()
+            .map_err(|e| format!("Autostart yoqilmadi: {}", e))?;
+    } else {
+        app.autolaunch()
+            .disable()
+            .map_err(|e| format!("Autostart o'chmadi: {}", e))?;
+    }
+    Ok(())
+}
+
 // ---------- Onboarding survey ----------
 
 const SURVEY_COMPLETED_KEY: &str = "survey_completed";
@@ -2806,12 +2952,11 @@ pub fn create_admin_notification(
 }
 
 #[tauri::command]
-pub fn list_notifications(
-    db: State<Arc<Db>>,
+pub async fn list_notifications(
+    db: State<'_, Arc<Db>>,
     params: Option<serde_json::Value>,
 ) -> Result<Vec<NotificationRow>, String> {
     cmd_log!("list_notifications");
-    let conn = db.conn();
     let p = params.unwrap_or(serde_json::json!({}));
     let cursor = p.get("cursor").and_then(|v| v.as_i64());
     let limit = p
@@ -2979,73 +3124,89 @@ pub fn list_notifications(
 
         Ok(Some(rows))
     }
-
-    if let Some(cloud_rows) = fetch_worker_notifications(&conn, latest_only, limit)? {
-        return Ok(cloud_rows);
-    }
-
-    let now = now_ms();
-    let mut sql = "
-        SELECT n.id, n.title, n.message, n.youtube_url, n.button_text, n.button_link, n.high_priority, n.is_active, n.created_at, n.expires_at
-        FROM notifications n
-        WHERE (n.expires_at IS NULL OR n.expires_at > ?1)
-          AND (?2 IS NULL OR n.created_at < ?2)
-    ".to_string();
-    if !include_inactive {
-        sql.push_str(" AND n.is_active = 1 ");
-    }
-    if latest_only {
-        sql.push_str(" ORDER BY n.created_at DESC LIMIT 1 ");
-    } else {
-        sql.push_str(" ORDER BY n.created_at DESC LIMIT ?3 ");
-    }
-
-    let mut list = Vec::new();
-    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
-    if latest_only {
-        let rows = stmt
-            .query_map(rusqlite::params![now, cursor], |r| {
-                Ok(NotificationRow {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    body: r.get(2)?,
-                    youtube_url: r.get(3)?,
-                    button_text: r.get(4)?,
-                    button_link: r.get(5)?,
-                    high_priority: r.get::<_, i64>(6)? != 0,
-                    is_active: r.get::<_, i64>(7)? != 0,
-                    created_at: r.get(8)?,
-                    expires_at: r.get(9)?,
-                    unread: false,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            list.push(row.map_err(|e| e.to_string())?);
+    let db = db.inner().clone();
+    let started_at = std::time::Instant::now();
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        let conn = db.conn();
+        if let Some(cloud_rows) = fetch_worker_notifications(&conn, latest_only, limit)? {
+            return Ok(cloud_rows);
         }
-    } else {
-        let rows = stmt
-            .query_map(rusqlite::params![now, cursor, limit], |r| {
-                Ok(NotificationRow {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    body: r.get(2)?,
-                    youtube_url: r.get(3)?,
-                    button_text: r.get(4)?,
-                    button_link: r.get(5)?,
-                    high_priority: r.get::<_, i64>(6)? != 0,
-                    is_active: r.get::<_, i64>(7)? != 0,
-                    created_at: r.get(8)?,
-                    expires_at: r.get(9)?,
-                    unread: false,
-                })
-            })
-            .map_err(|e| e.to_string())?;
-        for row in rows {
-            list.push(row.map_err(|e| e.to_string())?);
+
+        let now = now_ms();
+        let mut sql = "
+            SELECT n.id, n.title, n.message, n.youtube_url, n.button_text, n.button_link, n.high_priority, n.is_active, n.created_at, n.expires_at
+            FROM notifications n
+            WHERE (n.expires_at IS NULL OR n.expires_at > ?1)
+              AND (?2 IS NULL OR n.created_at < ?2)
+        ".to_string();
+        if !include_inactive {
+            sql.push_str(" AND n.is_active = 1 ");
         }
-    }
-    Ok(list)
+        if latest_only {
+            sql.push_str(" ORDER BY n.created_at DESC LIMIT 1 ");
+        } else {
+            sql.push_str(" ORDER BY n.created_at DESC LIMIT ?3 ");
+        }
+
+        let mut list = Vec::new();
+        let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+        if latest_only {
+            let rows = stmt
+                .query_map(rusqlite::params![now, cursor], |r| {
+                    Ok(NotificationRow {
+                        id: r.get(0)?,
+                        title: r.get(1)?,
+                        body: r.get(2)?,
+                        youtube_url: r.get(3)?,
+                        button_text: r.get(4)?,
+                        button_link: r.get(5)?,
+                        high_priority: r.get::<_, i64>(6)? != 0,
+                        is_active: r.get::<_, i64>(7)? != 0,
+                        created_at: r.get(8)?,
+                        expires_at: r.get(9)?,
+                        unread: false,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                list.push(row.map_err(|e| e.to_string())?);
+            }
+        } else {
+            let rows = stmt
+                .query_map(rusqlite::params![now, cursor, limit], |r| {
+                    Ok(NotificationRow {
+                        id: r.get(0)?,
+                        title: r.get(1)?,
+                        body: r.get(2)?,
+                        youtube_url: r.get(3)?,
+                        button_text: r.get(4)?,
+                        button_link: r.get(5)?,
+                        high_priority: r.get::<_, i64>(6)? != 0,
+                        is_active: r.get::<_, i64>(7)? != 0,
+                        created_at: r.get(8)?,
+                        expires_at: r.get(9)?,
+                        unread: false,
+                    })
+                })
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                list.push(row.map_err(|e| e.to_string())?);
+            }
+        }
+        Ok(list)
+    })
+    .await
+    .map_err(|e| format!("Notifications task failed: {}", e))?;
+    startup_diag(
+        "notifications.list",
+        format!(
+            "latest_only={} limit={} duration={}ms",
+            latest_only,
+            limit,
+            started_at.elapsed().as_millis()
+        ),
+    );
+    out
 }
 
 #[tauri::command]
@@ -3226,8 +3387,11 @@ pub fn get_extension_pending(
 // ---------- License (gate + cache + Worker API) ----------
 
 /// Default license Worker URL (used when QOOTI_LICENSE_API_URL is not set).
-/// Users can override via env var for development.
 const DEFAULT_LICENSE_API_URL: &str = "https://qooti-license.azizbekhabibullayev74.workers.dev";
+const COMPILED_LICENSE_API_URL: Option<&str> = option_env!("QOOTI_LICENSE_API_URL");
+const LICENSE_RESPONSE_SIGNING_SECRET: Option<&str> =
+    option_env!("QOOTI_LICENSE_RESPONSE_SIGNING_SECRET");
+const MAX_OFFLINE_CACHE_GRACE_SECONDS: i64 = 72 * 60 * 60;
 
 const LICENSE_CACHE_ID: i32 = 1;
 const DEVICE_ID_PREF_KEY: &str = "device_id";
@@ -3293,6 +3457,19 @@ fn now_unix_ts() -> i64 {
         .unwrap_or(0)
 }
 
+fn is_bloot_user_id(input: &str) -> bool {
+    let key = input.trim();
+    if key.is_empty() {
+        return false;
+    }
+    static BLT_RE: OnceLock<Regex> = OnceLock::new();
+    let blt_re = BLT_RE.get_or_init(|| {
+        Regex::new(r"(?i)^BLT-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$")
+            .expect("bloot public id regex")
+    });
+    blt_re.is_match(key) || Uuid::parse_str(key).is_ok()
+}
+
 fn normalize_license_status(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "valid" => "valid".to_string(),
@@ -3338,6 +3515,12 @@ fn read_license_cache_row(conn: &rusqlite::Connection) -> Result<Option<StoredLi
 
 fn is_cache_currently_valid(row: &StoredLicenseCache) -> bool {
     if row.license_key.trim().is_empty() || row.expires_at <= now_unix_ts() {
+        return false;
+    }
+    let Some(last_validated_at) = row.last_validated_at else {
+        return false;
+    };
+    if now_unix_ts().saturating_sub(last_validated_at) > MAX_OFFLINE_CACHE_GRACE_SECONDS {
         return false;
     }
     !row
@@ -3494,6 +3677,16 @@ struct LicenseServerCheck {
     plan_type: Option<String>,
     expires_at: Option<i64>,
     error: Option<String>,
+    username: Option<String>,
+}
+
+fn parse_license_username(v: &serde_json::Value) -> Option<String> {
+    v["username"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(30).collect::<String>())
+        .filter(|s| !s.is_empty())
 }
 
 fn parse_license_server_response(
@@ -3510,15 +3703,112 @@ fn parse_license_server_response(
         valid,
         status,
         plan_type: json["plan_type"].as_str().map(|s| s.to_string()),
-        expires_at: parse_expires_at(&json["expires_at"]).or_else(|| {
-            if valid {
-                Some(i64::MAX)
-            } else {
-                None
-            }
-        }),
+        expires_at: parse_expires_at(&json["expires_at"]),
         error,
+        username: parse_license_username(&json),
     }
+}
+
+type HmacSha256 = Hmac<Sha256>;
+
+fn configured_license_api_base() -> String {
+    COMPILED_LICENSE_API_URL
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(DEFAULT_LICENSE_API_URL)
+        .trim()
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn license_signature_secret() -> Option<&'static str> {
+    LICENSE_RESPONSE_SIGNING_SECRET
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn license_signature_payload(
+    status: &str,
+    valid: bool,
+    plan_type: Option<&str>,
+    expires_at: Option<i64>,
+    error: Option<&str>,
+    activation: bool,
+) -> String {
+    format!(
+        "status={}|valid={}|plan_type={}|expires_at={}|error={}|mode={}",
+        status,
+        if valid { "1" } else { "0" },
+        plan_type.unwrap_or(""),
+        expires_at.map(|n| n.to_string()).unwrap_or_default(),
+        error.unwrap_or(""),
+        if activation { "activate" } else { "status" }
+    )
+}
+
+fn verify_license_server_signature(
+    json: &serde_json::Value,
+    status: &str,
+    valid: bool,
+    plan_type: Option<&str>,
+    expires_at: Option<i64>,
+    error: Option<&str>,
+    activation: bool,
+) -> Result<(), String> {
+    if !valid {
+        return Ok(());
+    }
+    let Some(secret) = license_signature_secret() else {
+        if cfg!(debug_assertions) {
+            warn!("[license] signature verification skipped in debug build (missing signing secret)");
+            return Ok(());
+        }
+        return Err("License signature verification is not configured.".to_string());
+    };
+    let provided_sig = json["signature"]
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Missing license signature.".to_string())?;
+    let payload = license_signature_payload(
+        status,
+        valid,
+        plan_type,
+        expires_at,
+        error,
+        activation,
+    );
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|_| "Invalid license signing key.".to_string())?;
+    mac.update(payload.as_bytes());
+    let expected = mac.finalize().into_bytes();
+    let expected_hex = expected
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>();
+    if expected_hex != provided_sig {
+        return Err("Invalid license response signature.".to_string());
+    }
+    Ok(())
+}
+
+/// Sync display name from Bloot license API into local preferences (max 30 chars).
+fn sync_profile_name_from_bloot_server(
+    conn: &rusqlite::Connection,
+    username: Option<String>,
+) -> Result<(), String> {
+    let value = username
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(30).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "User".to_string());
+    conn.execute(
+        "INSERT OR REPLACE INTO preferences(key, value) VALUES ('profileName', ?)",
+        rusqlite::params![value],
+    )
+    .map_err(|e: rusqlite::Error| e.to_string())?;
+    Ok(())
 }
 
 fn request_license_server_check(
@@ -3533,8 +3823,8 @@ fn request_license_server_check(
         format!("{}/license/status", api_base)
     };
     let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(3))
-        .timeout(Duration::from_secs(if activation { 8 } else { 5 }))
+        .connect_timeout(Duration::from_secs(if activation { 8 } else { 4 }))
+        .timeout(Duration::from_secs(if activation { 15 } else { 6 }))
         .build()
         .map_err(|e| {
             log::error!("[HTTP][license] client build failed endpoint={} err={}", endpoint, e);
@@ -3587,7 +3877,17 @@ fn request_license_server_check(
             );
             format!("Network error: {}", e)
         })?;
-    Ok(parse_license_server_response(http_status, json))
+    let parsed = parse_license_server_response(http_status, json.clone());
+    verify_license_server_signature(
+        &json,
+        &parsed.status,
+        parsed.valid,
+        parsed.plan_type.as_deref(),
+        parsed.expires_at,
+        parsed.error.as_deref(),
+        activation,
+    )?;
+    Ok(parsed)
 }
 
 #[tauri::command]
@@ -3654,9 +3954,17 @@ pub fn validate_license(
             error: Some("Please enter a license key.".to_string()),
         });
     }
-    let api_base = std::env::var("QOOTI_LICENSE_API_URL")
-        .unwrap_or_else(|_| DEFAULT_LICENSE_API_URL.to_string());
-    let api_base = api_base.trim().trim_end_matches('/');
+    if !is_bloot_user_id(key_trim) {
+        return Ok(ValidateLicenseResult {
+            success: false,
+            plan_type: None,
+            expires_at: None,
+            status: Some("invalid".to_string()),
+            used_cached: false,
+            error: Some("Please enter your Bloot User ID (BLT-xxxx-xxxx-xxxx).".to_string()),
+        });
+    }
+    let api_base = configured_license_api_base();
     if api_base.is_empty() {
         return Ok(ValidateLicenseResult {
             success: false,
@@ -3672,7 +3980,7 @@ pub fn validate_license(
         api_base
     );
     let device_id = get_device_fingerprint(&db)?;
-    let server_check = match request_license_server_check(api_base, key_trim, &device_id, true) {
+    let server_check = match request_license_server_check(&api_base, key_trim, &device_id, true) {
         Ok(result) => result,
         Err(error) => {
             info!("[license] validate_license: request failed: {}", error);
@@ -3687,12 +3995,22 @@ pub fn validate_license(
         }
     };
     if server_check.valid {
+        let Some(expires) = server_check.expires_at else {
+            return Ok(ValidateLicenseResult {
+                success: false,
+                plan_type: None,
+                expires_at: None,
+                status: Some("invalid".to_string()),
+                used_cached: false,
+                error: Some("License response missing expiry timestamp.".to_string()),
+            });
+        };
         let plan_type = server_check
             .plan_type
             .clone()
             .unwrap_or_else(|| "lifetime".to_string());
-        let expires = server_check.expires_at.unwrap_or(i64::MAX);
         let conn = db.conn();
+        let _ = sync_profile_name_from_bloot_server(&conn, server_check.username.clone());
         set_license_cache_impl(&conn, key_trim, &plan_type, expires, "valid", None)?;
         return Ok(ValidateLicenseResult {
             success: true,
@@ -3739,6 +4057,29 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         );
         return Ok(build_license_cache_result(None));
     };
+    if !is_bloot_user_id(&row.license_key) {
+        let conn = db.conn();
+        let _ = update_cached_license_validation_state(
+            &conn,
+            "invalid",
+            Some("Activation now requires Bloot User ID format."),
+        );
+        info!(
+            "[license] result | valid=false | reason=invalid_cached_key_format | duration={}ms",
+            t0.elapsed().as_millis()
+        );
+        return Ok(LicenseCacheResult {
+            valid: false,
+            plan_type: Some(row.plan_type),
+            expires_at: Some(row.expires_at),
+            activated_at: row.activated_at,
+            has_cached_key: true,
+            used_cached: false,
+            status: Some("invalid".to_string()),
+            error: Some("Please activate with your Bloot User ID (BLT-xxxx-xxxx-xxxx).".to_string()),
+            last_validated_at: Some(now_unix_ts()),
+        });
+    }
     let key_hint = format!(
         "{}***",
         row.license_key.chars().take(4).collect::<String>()
@@ -3749,9 +4090,7 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         row.plan_type,
         t0.elapsed().as_millis()
     );
-    let api_base = std::env::var("QOOTI_LICENSE_API_URL")
-        .unwrap_or_else(|_| DEFAULT_LICENSE_API_URL.to_string());
-    let api_base = api_base.trim().trim_end_matches('/');
+    let api_base = configured_license_api_base();
     if api_base.is_empty() {
         let valid = is_cache_currently_valid(&row);
         info!(
@@ -3776,30 +4115,29 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         });
     }
     let device_id = get_device_fingerprint(&db)?;
-    let server_check = match request_license_server_check(api_base, &row.license_key, &device_id, false) {
+    let server_check =
+        match request_license_server_check(&api_base, &row.license_key, &device_id, false) {
         Ok(result) => result,
         Err(error) => {
+            let cached_valid = is_cache_currently_valid(&row);
+            let fallback_status = if cached_valid { "offline_cache" } else { "network_error" };
             warn!(
-                "[license] server unreachable | url={} | error={} | duration={}ms",
-                license_endpoint_for_log(api_base),
+                "[license] server unreachable | url={} | error={} | cached_valid={} | duration={}ms",
+                license_endpoint_for_log(&api_base),
                 error,
+                cached_valid,
                 t0.elapsed().as_millis()
             );
             let conn = db.conn();
-            let _ = update_cached_license_validation_state(&conn, "network_error", Some(error.as_str()));
-            let valid = is_cache_currently_valid(&row);
+            let _ = update_cached_license_validation_state(&conn, fallback_status, Some(error.as_str()));
             return Ok(LicenseCacheResult {
-                valid,
+                valid: cached_valid,
                 plan_type: Some(row.plan_type),
                 expires_at: Some(row.expires_at),
                 activated_at: row.activated_at,
                 has_cached_key: true,
-                used_cached: valid,
-                status: Some(if valid {
-                    "offline_cache".to_string()
-                } else {
-                    "network_error".to_string()
-                }),
+                used_cached: cached_valid,
+                status: Some(fallback_status.to_string()),
                 error: Some(error),
                 last_validated_at: Some(now_unix_ts()),
             });
@@ -3809,7 +4147,32 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         .plan_type
         .clone()
         .unwrap_or_else(|| row.plan_type.clone());
-    let expires_at = server_check.expires_at.unwrap_or(row.expires_at);
+    let expires_at = if server_check.valid {
+        match server_check.expires_at {
+            Some(v) => v,
+            None => {
+                let conn = db.conn();
+                let _ = update_cached_license_validation_state(
+                    &conn,
+                    "invalid",
+                    Some("License response missing expiry timestamp."),
+                );
+                return Ok(LicenseCacheResult {
+                    valid: false,
+                    plan_type: Some(row.plan_type),
+                    expires_at: Some(row.expires_at),
+                    activated_at: row.activated_at,
+                    has_cached_key: true,
+                    used_cached: false,
+                    status: Some("invalid".to_string()),
+                    error: Some("License response missing expiry timestamp.".to_string()),
+                    last_validated_at: Some(now_unix_ts()),
+                });
+            }
+        }
+    } else {
+        server_check.expires_at.unwrap_or(row.expires_at)
+    };
     let conn = db.conn();
     let _ = set_license_cache_impl(
         &conn,
@@ -3819,6 +4182,9 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         server_check.status.as_str(),
         server_check.error.as_deref(),
     );
+    if server_check.valid {
+        let _ = sync_profile_name_from_bloot_server(&conn, server_check.username.clone());
+    }
     let days_remaining = expires_at
         .checked_sub(now_unix_ts())
         .map(|d| d / 86400)
@@ -3845,17 +4211,53 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
 }
 
 #[tauri::command]
-pub fn check_current_license_with_server(db: State<Arc<Db>>) -> Result<LicenseCacheResult, String> {
+pub async fn check_current_license_with_server(
+    db: State<'_, Arc<Db>>,
+) -> Result<LicenseCacheResult, String> {
     cmd_log!("check_current_license_with_server");
     let db = db.inner().clone();
-    check_current_license_with_server_impl(&db)
+    let started_at = std::time::Instant::now();
+    let out = tauri::async_runtime::spawn_blocking(move || check_current_license_with_server_impl(&db))
+        .await
+        .map_err(|e| format!("License check task failed: {}", e))?;
+    if let Ok(result) = &out {
+        startup_diag(
+            "license.startup_check",
+            format!(
+                "valid={} status={} cached={} duration={}ms",
+                result.valid,
+                result.status.clone().unwrap_or_default(),
+                result.used_cached,
+                started_at.elapsed().as_millis()
+            ),
+        );
+    }
+    out
 }
 
 #[tauri::command]
-pub fn refresh_license_status(db: State<Arc<Db>>) -> Result<LicenseCacheResult, String> {
+pub async fn refresh_license_status(
+    db: State<'_, Arc<Db>>,
+) -> Result<LicenseCacheResult, String> {
     cmd_log!("refresh_license_status");
     let db = db.inner().clone();
-    check_current_license_with_server_impl(&db)
+    let started_at = std::time::Instant::now();
+    let out = tauri::async_runtime::spawn_blocking(move || check_current_license_with_server_impl(&db))
+        .await
+        .map_err(|e| format!("License refresh task failed: {}", e))?;
+    if let Ok(result) = &out {
+        startup_diag(
+            "license.refresh_check",
+            format!(
+                "valid={} status={} cached={} duration={}ms",
+                result.valid,
+                result.status.clone().unwrap_or_default(),
+                result.used_cached,
+                started_at.elapsed().as_millis()
+            ),
+        );
+    }
+    out
 }
 
 fn get_setting(conn: &rusqlite::Connection, key: &str) -> String {
@@ -3897,6 +4299,11 @@ fn setting_default(key: &str) -> Option<&'static str> {
         "d1ApiToken" => "",
         "profileName" => "",
         "profileImageDataUrl" => "",
+        "storeInstalledCollectionIds" => "[]",
+        "storeInstalledCollectionLinks" => "{}",
+        "launchAtLogin" => "true",
+        "onboarding_completed" => "true",
+        "confetti_shown" => "false",
         _ => return None,
     })
 }
@@ -3914,6 +4321,10 @@ pub fn get_settings(db: State<Arc<Db>>) -> Result<serde_json::Value, String> {
         .collect();
 
     let mut map = serde_json::Map::new();
+    // IMPORTANT: Any key written via set_preference must be added to this
+    // whitelist to be returned on cold start. Missing keys default to
+    // setting_default() value. Do not write new preference keys without
+    // adding them here.
     for key in [
         "theme",
         "cardSize",
@@ -3940,6 +4351,11 @@ pub fn get_settings(db: State<Arc<Db>>) -> Result<serde_json::Value, String> {
         "d1ApiToken",
         "profileName",
         "profileImageDataUrl",
+        "storeInstalledCollectionIds",
+        "storeInstalledCollectionLinks",
+        "launchAtLogin",
+        "onboarding_completed",
+        "confetti_shown",
     ] {
         let value = rows
             .iter()
@@ -5969,7 +6385,6 @@ fn fetch_youtube_channel(ytdlp_path: &std::path::Path, url: &str) -> Option<Stri
         .args([
             "--skip-download",
             "--no-warnings",
-            "--no-check-certificates",
             "--print",
             "%(channel)s",
             url,
@@ -6278,7 +6693,6 @@ pub async fn download_video_from_url(
             output_str.clone(),
             "-f".to_string(),
             format_str,
-            "--no-check-certificates".to_string(),
             "--no-warnings".to_string(),
             "--no-playlist".to_string(),
             "--no-update".to_string(),
@@ -7021,7 +7435,6 @@ pub async fn add_thumbnail_from_video_url(
             cmd.args([
                 "-o",
                 &output_str_clone,
-                "--no-check-certificates",
                 "--no-warnings",
                 "--no-playlist",
                 "--skip-download",
@@ -7565,10 +7978,44 @@ pub struct SubmitFeedbackPayload {
     pub timestamp_iso: Option<String>,
 }
 
-const TELEGRAM_BOT_TOKEN: &str = "8783240003:AAGYfMTDjzo8nJ6xGMqBVWbI557ab3LZxpA";
-const TELEGRAM_CHAT_ID: &str = "911682360";
+const TELEGRAM_BOT_TOKEN: Option<&str> = option_env!("QOOTI_TELEGRAM_BOT_TOKEN");
+const TELEGRAM_CHAT_ID: Option<&str> = option_env!("QOOTI_TELEGRAM_CHAT_ID");
 const FEEDBACK_LOG_LINES_LIMIT: usize = 300;
 static APP_LOG_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+fn get_telegram_bot_token() -> Result<&'static str, String> {
+    TELEGRAM_BOT_TOKEN
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| "Telegram bot token is not configured".to_string())
+}
+
+fn get_telegram_chat_id() -> Option<&'static str> {
+    TELEGRAM_CHAT_ID
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn mask_secret_for_feedback(secret: &str) -> String {
+    let s = secret.trim();
+    if s.is_empty() {
+        return "N/A".to_string();
+    }
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= 8 {
+        return "****".to_string();
+    }
+    let prefix: String = chars.iter().take(4).collect();
+    let suffix: String = chars
+        .iter()
+        .rev()
+        .take(4)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("{}…{}", prefix, suffix)
+}
 
 pub fn configure_app_log_dir(path: PathBuf) {
     if path.as_os_str().is_empty() {
@@ -7651,12 +8098,13 @@ fn store_feedback_screenshot(bytes: &[u8], filename: &str) -> Result<String, Str
 }
 
 fn resolve_telegram_chat_id(client: &reqwest::blocking::Client) -> Result<String, String> {
-    if !TELEGRAM_CHAT_ID.trim().is_empty() {
-        return Ok(TELEGRAM_CHAT_ID.trim().to_string());
+    if let Some(chat_id) = get_telegram_chat_id() {
+        return Ok(chat_id.to_string());
     }
+    let bot_token = get_telegram_bot_token()?;
     let url = format!(
         "https://api.telegram.org/bot{}/getUpdates",
-        TELEGRAM_BOT_TOKEN
+        bot_token
     );
     let resp = client
         .get(url)
@@ -7760,9 +8208,10 @@ Creative level: {}",
             .build()
             .map_err(|e| format!("HTTP client: {}", e))?;
         let chat_id = resolve_telegram_chat_id(&client)?;
+        let bot_token = get_telegram_bot_token()?;
         let url = format!(
             "https://api.telegram.org/bot{}/sendMessage",
-            TELEGRAM_BOT_TOKEN
+            bot_token
         );
         let params = [
             ("chat_id", chat_id),
@@ -8008,7 +8457,14 @@ fn send_telegram_feedback(db: Arc<Db>, job: &QueuedFeedbackJob) -> Result<(), St
 Media count: {}\n\
 Collections: {}\n\n\
 💬 Message:\n{}",
-        username, license_key, os, app_version, ts, counts.0, counts.1, msg
+        username,
+        mask_secret_for_feedback(&license_key),
+        os,
+        app_version,
+        ts,
+        counts.0,
+        counts.1,
+        msg
     );
     if body.len() > 3900 {
         body.truncate(3900);
@@ -8019,6 +8475,7 @@ Collections: {}\n\n\
         .build()
         .map_err(|e| format!("Failed to initialize feedback client: {}", e))?;
     let chat_id = resolve_telegram_chat_id(&client)?;
+    let bot_token = get_telegram_bot_token()?;
 
     if let Some(image_path) = job.image_path.as_ref().filter(|v| !v.trim().is_empty()) {
         let path = PathBuf::from(image_path);
@@ -8042,7 +8499,7 @@ Collections: {}\n\n\
             .to_string();
         let url = format!(
             "https://api.telegram.org/bot{}/sendPhoto",
-            TELEGRAM_BOT_TOKEN
+            bot_token
         );
         let part = reqwest::blocking::multipart::Part::bytes(bytes)
             .file_name(filename)
@@ -8070,7 +8527,7 @@ Collections: {}\n\n\
     } else {
         let url = format!(
             "https://api.telegram.org/bot{}/sendMessage",
-            TELEGRAM_BOT_TOKEN
+            bot_token
         );
         let params = [
             ("chat_id", chat_id.clone()),
@@ -8097,7 +8554,7 @@ Collections: {}\n\n\
     let (log_filename, log_bytes) = build_feedback_log_attachment(job, &username);
     let doc_url = format!(
         "https://api.telegram.org/bot{}/sendDocument",
-        TELEGRAM_BOT_TOKEN
+        bot_token
     );
     let log_part = reqwest::blocking::multipart::Part::bytes(log_bytes)
         .file_name(log_filename)
@@ -9799,4 +10256,31 @@ pub async fn find_similar(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[cfg(test)]
+mod windows_path_unit_tests {
+    use super::normalize_windows_verbatim_prefix;
+
+    #[test]
+    fn strips_nt_verbatim_drive_path() {
+        assert_eq!(
+            normalize_windows_verbatim_prefix(r"\\?\C:\folder\file.txt"),
+            r"C:\folder\file.txt"
+        );
+    }
+
+    #[test]
+    fn strips_slash_question_slash_prefix() {
+        assert_eq!(
+            normalize_windows_verbatim_prefix("//?/C:/folder/file.txt"),
+            "C:/folder/file.txt"
+        );
+    }
+
+    #[test]
+    fn leaves_plain_path_unchanged() {
+        let p = r"C:\data\vault\media\a.png";
+        assert_eq!(normalize_windows_verbatim_prefix(p), p);
+    }
 }

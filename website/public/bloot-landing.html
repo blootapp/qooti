@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>bloot — Your vault, before anyone else gets it.</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@200;300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg: #0a0a0a;
+      --surface: #111111;
+      --surface2: #181818;
+      --border: rgba(255,255,255,0.07);
+      --border-hover: rgba(255,255,255,0.13);
+      --accent: #4eabfb;
+      --accent-soft: rgba(78,171,251,0.08);
+      --accent-border: rgba(78,171,251,0.18);
+      --white: #f0f0ee;
+      --muted: rgba(240,240,238,0.38);
+      --muted2: rgba(240,240,238,0.16);
+      --font: 'Geist', -apple-system, sans-serif;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body { background: var(--bg); color: var(--white); font-family: var(--font); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      height: 56px; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 48px;
+      background: rgba(10,10,10,0.75);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { display: block; text-decoration: none; line-height: 0; }
+    .nav-logo img { height: 22px; display: block; mix-blend-mode: screen; }
+    .nav-links { display: flex; gap: 32px; list-style: none; position: absolute; left: 50%; transform: translateX(-50%); }
+    .nav-links a { font-size: 13px; color: var(--muted); text-decoration: none; font-weight: 400; transition: color 0.15s; }
+    .nav-links a:hover { color: var(--white); }
+    .nav-actions { display: flex; align-items: center; gap: 8px; }
+    .nav-actions.logged-in { display: none; }
+    .nav-profile {
+      display: none;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: var(--white);
+      color: #0a0a0a;
+      font-family: var(--font);
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.15s, box-shadow 0.15s;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .nav-profile.show { display: flex; }
+    .nav-profile:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(0,0,0,0.25); }
+    .nav-ghost { font-family: var(--font); font-size: 12.5px; color: var(--muted); background: none; border: none; cursor: pointer; padding: 5px 12px; text-decoration: none; transition: color 0.15s; }
+    .nav-ghost:hover { color: var(--white); }
+    .nav-solid { font-family: var(--font); font-size: 12.5px; font-weight: 600; color: #000; background: var(--white); border: none; cursor: pointer; padding: 6px 14px; border-radius: 6px; text-decoration: none; display: inline-flex; align-items: center; gap: 5px; transition: all 0.15s; letter-spacing: -0.01em; }
+    .nav-solid:hover { background: var(--accent); }
+
+    /* ── HERO ── */
+    /* Hero is taller so screenshot is only visible on scroll */
+    .hero {
+      min-height: 100vh;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 120px 40px 120px;
+      text-align: center; position: relative;
+    }
+    .hero-glow { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 700px; height: 500px; background: radial-gradient(ellipse at 50% 0%, rgba(78,171,251,0.09) 0%, transparent 65%); pointer-events: none; }
+
+    .hero-h1 {
+      font-size: clamp(58px, 8.5vw, 116px);
+      font-weight: 300;
+      line-height: 0.93;
+      letter-spacing: -0.05em;
+      color: var(--white);
+      max-width: 940px;
+      animation: up 0.6s ease both;
+    }
+    .hero-h1 em { font-style: normal; color: var(--accent); }
+
+    .hero-p {
+      font-size: 16px; font-weight: 300; color: var(--muted); line-height: 1.8;
+      max-width: 380px; margin-top: 28px; letter-spacing: -0.005em;
+      animation: up 0.6s 0.1s ease both;
+    }
+
+    .hero-actions { display: flex; align-items: center; gap: 10px; margin-top: 40px; animation: up 0.6s 0.18s ease both; }
+    .btn-dl { font-family: var(--font); font-size: 14px; font-weight: 500; color: #000; background: var(--white); border: none; border-radius: 8px; padding: 11px 24px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 7px; letter-spacing: -0.02em; transition: all 0.18s; }
+    .btn-dl:hover { background: var(--accent); transform: translateY(-1px); box-shadow: 0 8px 32px rgba(78,171,251,0.2); }
+    .btn-text { font-family: var(--font); font-size: 14px; font-weight: 400; color: var(--muted); background: none; border: none; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; padding: 11px 14px; transition: color 0.15s; letter-spacing: -0.01em; }
+    .btn-text:hover { color: var(--white); }
+    .hero-meta { font-size: 11.5px; color: var(--muted2); margin-top: 16px; letter-spacing: 0.02em; animation: up 0.6s 0.26s ease both; }
+
+    /* ── SHARED ── */
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 0 48px; }
+    hr.div { border: none; border-top: 1px solid var(--border); max-width: 1080px; margin: 0 auto; }
+    .eyebrow { font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted2); margin-bottom: 16px; }
+    .h2 { font-size: clamp(32px, 4vw, 52px); font-weight: 300; letter-spacing: -0.04em; line-height: 1.06; color: var(--white); }
+    .sub { font-size: 15px; font-weight: 300; color: var(--muted); line-height: 1.8; max-width: 400px; margin-top: 14px; letter-spacing: -0.005em; }
+
+    /* ── DOWNLOAD (aligned with marketing.css) ── */
+    .download-section { width: 100%; padding: 96px 24px; position: relative; font-family: var(--font);
+      background: radial-gradient(ellipse 68% 46% at 74% 26%, rgba(78,171,251,0.12) 0%, transparent 62%),
+        radial-gradient(ellipse 55% 44% at 18% 72%, rgba(78,171,251,0.08) 0%, transparent 66%); }
+    .download-section__inner { max-width: 960px; margin: 0 auto; }
+    .download-section__content { text-align: center; }
+    .download-section .screenshot-wrap { position: relative; max-width: 900px; margin: 0 auto 56px; }
+    .download-section .screenshot-wrap::before {
+      content: ""; position: absolute; inset: -1px; border-radius: 13px; z-index: -1; pointer-events: none;
+      background: linear-gradient(135deg, rgba(78,171,251,0.08) 0%, rgba(255,255,255,0.03) 50%, rgba(78,171,251,0.04) 100%);
+    }
+    .download-section .window-chrome { position: relative; width: 100%; max-width: 900px; margin: 0 auto; background: #0d0d10;
+      border: 0.5px solid rgba(255,255,255,0.08); border-radius: 12px; overflow: hidden; }
+    .download-section .window-bar { height: 32px; background: #111114; border-bottom: 0.5px solid rgba(255,255,255,0.07);
+      display: flex; align-items: center; padding: 0 14px; gap: 6px; }
+    .download-section .window-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .download-section .window-dot--red { background: #ff5f57; }
+    .download-section .window-dot--yellow { background: #ffbd2e; }
+    .download-section .window-dot--green { background: #28c840; }
+    .download-section .app-screenshot { width: 100%; height: auto; display: block; }
+    .download-section-label { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+      color: rgba(240,240,238,0.3); margin: 0 auto 14px; text-align: center; }
+    .download-headline { font-size: clamp(34px, 6vw, 48px); font-weight: 700; letter-spacing: -0.04em; color: var(--white);
+      line-height: 1.0; margin: 0 auto 14px; text-align: center; text-wrap: balance; }
+    .download-sub { font-size: 15px; font-weight: 300; color: rgba(240,240,238,0.4); line-height: 1.6; text-align: center;
+      max-width: 400px; margin: 0 auto 36px; }
+    .download-buttons { display: flex; flex-wrap: wrap; justify-content: center; align-items: stretch; gap: 12px;
+      width: fit-content; max-width: 100%; margin: 0 auto; }
+    .download-dl-btn { box-sizing: border-box; width: 200px; height: 52px; padding: 0 20px; display: inline-flex; align-items: center;
+      justify-content: center; gap: 12px; background: rgba(255,255,255,0.06); border: 0.5px solid rgba(255,255,255,0.12);
+      border-radius: 12px; text-decoration: none; font-family: var(--font); color: inherit; cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease; }
+    .download-dl-btn:hover { background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); }
+    .download-dl-btn__icon { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--white); }
+    .download-dl-btn__svg { display: block; filter: brightness(0) invert(1); opacity: 0.95; }
+    .download-dl-btn__text { display: flex; flex-direction: column; align-items: flex-start; text-align: left; min-width: 0; }
+    .download-dl-btn__label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.07em; color: rgba(240,240,238,0.35);
+      font-weight: 500; line-height: 1.2; }
+    .download-dl-btn__platform { font-size: 15px; font-weight: 600; color: var(--white); letter-spacing: -0.02em; line-height: 1.2; }
+    .extension-link { display: inline-flex; align-items: center; justify-content: center; gap: 8px; margin-top: 20px; font-size: 13px;
+      color: rgba(78,171,251,0.7); text-decoration: none; transition: color 0.15s ease; }
+    .extension-link:hover { color: var(--accent); }
+    .extension-link__chrome { width: 16px; height: 16px; flex-shrink: 0; background-color: rgba(78,171,251,0.85);
+      -webkit-mask: url(assets/chrome-fill.svg) center / contain no-repeat; mask: url(assets/chrome-fill.svg) center / contain no-repeat; }
+    .extension-link:hover .extension-link__chrome { background-color: var(--accent); }
+    /* ── PRICING ── */
+    .pricing-section { padding: 140px 0; }
+    .pricing-head { text-align: center; max-width: 560px; margin: 0 auto; }
+    .pricing-grid { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; margin-top: 64px; }
+    .plan { padding: 48px 40px; border-right: 1px solid var(--border); transition: background 0.2s; }
+    .plan:last-child { border-right: none; }
+    .plan:hover { background: rgba(255,255,255,0.015); }
+    .plan.featured { background: rgba(78,171,251,0.03); }
+    .plan-tag { font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); display: block; height: 16px; margin-bottom: 28px; }
+    .plan-name { font-size: 13px; color: var(--muted); font-weight: 400; margin-bottom: 10px; }
+    .plan-price { font-size: 42px; font-weight: 300; letter-spacing: -0.05em; color: var(--white); line-height: 1; display: flex; align-items: baseline; gap: 3px; }
+    .plan-suffix { font-size: 13px; font-weight: 300; color: var(--muted); letter-spacing: 0; }
+    .plan-note { font-size: 11.5px; color: var(--muted2); margin-top: 6px; margin-bottom: 36px; font-weight: 300; }
+    .plan-line { height: 1px; background: var(--border); margin-bottom: 28px; }
+    .plan-features { list-style: none; display: flex; flex-direction: column; gap: 10px; margin-bottom: 36px; }
+    .plan-features li { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--muted); font-weight: 300; }
+    .plan-check { color: var(--accent); flex-shrink: 0; }
+    .plan-btn { display: block; width: 100%; padding: 11px; border-radius: 8px; text-align: center; text-decoration: none; font-family: var(--font); font-size: 13.5px; font-weight: 400; cursor: pointer; border: 1px solid var(--border); background: none; color: var(--muted); transition: all 0.18s; }
+    .plan-btn:hover { border-color: var(--border-hover); color: var(--white); }
+    .plan.featured .plan-btn { background: var(--accent); border-color: transparent; color: #000; font-weight: 600; }
+    .plan.featured .plan-btn:hover { background: #72bcfc; }
+
+    /* ── FOOTER ── */
+    .footer-wrap { border-top: 1px solid var(--border); padding: 72px 48px 48px; max-width: 1080px; margin: 0 auto; }
+    .footer-top { display: grid; grid-template-columns: 1.8fr 1fr 1fr 1fr; gap: 60px; margin-bottom: 56px; }
+    .footer-logo { display: block; text-decoration: none; line-height: 0; }
+    .footer-logo img { height: 20px; mix-blend-mode: screen; display: block; margin-bottom: 14px; }
+    .footer-tagline { font-size: 12.5px; font-weight: 300; color: var(--muted2); line-height: 1.75; max-width: 220px; }
+    .footer-heading { font-size: 11.5px; font-weight: 500; color: var(--white); margin-bottom: 18px; }
+    .footer-links { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .footer-links a { font-size: 12.5px; font-weight: 300; color: var(--muted2); text-decoration: none; transition: color 0.15s; }
+    .footer-links a:hover { color: var(--muted); }
+    .footer-bottom { display: flex; align-items: center; justify-content: space-between; padding-top: 28px; border-top: 1px solid var(--border); }
+    .footer-copy { font-size: 11.5px; color: var(--muted2); font-weight: 300; }
+    .footer-social { display: flex; gap: 20px; }
+    .footer-social a { font-size: 12px; font-weight: 300; color: var(--muted2); text-decoration: none; display: flex; align-items: center; gap: 5px; transition: color 0.15s; }
+    .footer-social a:hover { color: var(--muted); }
+
+    /* ── ANIMATIONS ── */
+    @keyframes up { from { opacity:0; transform:translateY(18px); } to { opacity:1; transform:translateY(0); } }
+    .reveal { opacity:0; transform:translateY(20px); transition: opacity 0.55s ease, transform 0.55s ease; }
+    .reveal.in { opacity:1; transform:translateY(0); }
+    .d1 { transition-delay:.08s; } .d2 { transition-delay:.16s; }
+
+    @media (max-width: 860px) {
+      nav { padding: 0 20px; } .nav-links { display: none; }
+      .hero { padding: 100px 20px 80px; }
+      .wrap { padding: 0 20px; } hr.div { margin: 0 20px; }
+      .download-section { padding: 72px 20px; }
+      .download-section .screenshot-wrap { margin-bottom: 40px; }
+      .pricing-section { padding: 100px 0; }
+      .download-buttons { flex-direction: column; align-items: center; width: 100%; }
+      .download-dl-btn { width: min(100%, 400px); max-width: 400px; }
+      .pricing-grid { grid-template-columns: 1fr; }
+      .plan { border-right: none; border-bottom: 1px solid var(--border); } .plan:last-child { border-bottom: none; }
+      .footer-top { grid-template-columns: 1fr 1fr; gap: 36px; } .footer-wrap { padding: 48px 20px 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <a href="/" class="nav-logo"><img src="assets/bloot.png" alt="bloot"/></a>
+  <ul class="nav-links">
+    <li><a href="#top">Home</a></li>
+    <li><a href="#download">Download</a></li>
+    <li><a href="#pricing">Pricing</a></li>
+    <li><a href="/login" id="navDashboardLink">Dashboard</a></li>
+  </ul>
+  <div class="nav-actions" id="navActions">
+    <a href="/login" class="nav-ghost">Log in</a>
+    <a href="/signup" class="nav-solid">
+      Get started
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M1.5 5.5h8M5.5 1.5l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+  <a href="/dashboard" class="nav-profile" id="navProfile" title="Dashboard" aria-label="Open dashboard"></a>
+</nav>
+<script>
+  (function() {
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        var dashboardLink = document.getElementById('navDashboardLink');
+        if (data && data.user && data.user.username) {
+          var actions = document.getElementById('navActions');
+          var profile = document.getElementById('navProfile');
+          if (dashboardLink) dashboardLink.setAttribute('href', '/dashboard');
+          if (actions && profile) {
+            actions.classList.add('logged-in');
+            profile.textContent = (data.user.username.charAt(0) || '?').toUpperCase();
+            profile.classList.add('show');
+          }
+        } else if (dashboardLink) {
+          dashboardLink.setAttribute('href', '/login');
+        }
+      })
+      .catch(function() {});
+  })();
+</script>
+
+<!-- HERO — text only, full viewport height, screenshot below the fold -->
+<div class="hero" id="top">
+  <div class="hero-glow"></div>
+  <h1 class="hero-h1">Your vault,<br/><em>before anyone</em><br/>else gets it.</h1>
+  <p class="hero-p">Save images and videos from anywhere on the web. Organize your inspiration. Locally, privately, instantly.</p>
+  <div class="hero-actions">
+    <a href="#download" class="btn-dl">
+      Download free
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M6.5 1.5v7M3.5 6l3 3 3-3M1.5 11h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+    <a href="#pricing" class="btn-text">
+      How it works
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2.5 6h7M6 2.5l3.5 3.5L6 9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </a>
+  </div>
+  <p class="hero-meta">Windows &amp; macOS &nbsp;·&nbsp; No account required</p>
+</div>
+
+<!-- DOWNLOAD -->
+<section class="download-section" id="download">
+  <div class="download-section__inner">
+    <div class="download-section__content reveal">
+      <div class="screenshot-wrap">
+        <div class="window-chrome">
+          <div class="window-bar" aria-hidden="true">
+            <span class="window-dot window-dot--red"></span>
+            <span class="window-dot window-dot--yellow"></span>
+            <span class="window-dot window-dot--green"></span>
+          </div>
+          <img src="assets/app.png" alt="bloot app interface" class="app-screenshot" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"/>
+          <div class="app-screenshot-fallback" style="display:none;min-height:200px;align-items:center;justify-content:center;color:var(--muted2);font-size:13px;background:var(--surface);">Screenshot</div>
+        </div>
+      </div>
+      <p class="download-section-label">Download</p>
+      <h2 class="download-headline">Up and running in sixty seconds.</h2>
+      <p class="download-sub">Available for macOS and Windows. No account required to get started.</p>
+      <div class="download-buttons">
+        <a href="/download/thank-you?platform=mac" class="download-dl-btn">
+          <span class="download-dl-btn__icon" aria-hidden="true"><img src="assets/apple-fill.svg" alt="" width="18" height="18" class="download-dl-btn__svg"/></span>
+          <span class="download-dl-btn__text">
+            <span class="download-dl-btn__label">Download</span>
+            <span class="download-dl-btn__platform">macOS</span>
+          </span>
+        </a>
+        <a href="/download/thank-you?platform=win" class="download-dl-btn">
+          <span class="download-dl-btn__icon" aria-hidden="true"><img src="assets/windows-fill.svg" alt="" width="16" height="16" class="download-dl-btn__svg"/></span>
+          <span class="download-dl-btn__text">
+            <span class="download-dl-btn__label">Download</span>
+            <span class="download-dl-btn__platform">Windows</span>
+          </span>
+        </a>
+      </div>
+      <a href="/help/chrome-extension" class="extension-link"><span class="extension-link__chrome" aria-hidden="true"></span>Chrome extension</a>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- PRICING -->
+<section class="pricing-section" id="pricing">
+  <div class="wrap">
+    <div class="pricing-head reveal">
+      <p class="eyebrow">Pricing</p>
+      <h2 class="h2">Choose what works best for you.</h2>
+      <p class="sub">The longer period you choose, the more discount you get.</p>
+    </div>
+    <div class="pricing-grid reveal d1">
+      <div class="plan">
+        <span class="plan-tag"></span>
+        <p class="plan-name">1 month</p>
+        <div class="plan-price">49<span class="plan-suffix">,000 UZS</span></div>
+        <p class="plan-note">Subscription</p>
+        <div class="plan-line"></div>
+        <ul class="plan-features">
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Unlimited media saves</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Chrome extension</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Collections &amp; tags</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Visual text search</li>
+        </ul>
+        <a href="/signup" class="plan-btn" data-qooti-package="1 oy — 49 000 so‘m">Get started</a>
+      </div>
+      <div class="plan featured">
+        <span class="plan-tag">Best value</span>
+        <p class="plan-name">1 year</p>
+        <div class="plan-price">299<span class="plan-suffix">,000 UZS</span></div>
+        <p class="plan-note">Subscription · 49% off vs monthly</p>
+        <div class="plan-line"></div>
+        <ul class="plan-features">
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in 6 months</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Mobile companion app</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority support</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Early feature access</li>
+        </ul>
+        <a href="/signup" class="plan-btn" data-qooti-package="1 yil — 299 000 so‘m">Get started</a>
+      </div>
+      <div class="plan">
+        <span class="plan-tag"></span>
+        <p class="plan-name">6 months</p>
+        <div class="plan-price">199<span class="plan-suffix">,000 UZS</span></div>
+        <p class="plan-note">Subscription · 32% off vs monthly</p>
+        <div class="plan-line"></div>
+        <ul class="plan-features">
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Everything in 1 month</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Mobile companion app</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Priority support</li>
+          <li><svg class="plan-check" width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M2.5 7l3 3 6-6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Early feature access</li>
+        </ul>
+        <a href="/signup" class="plan-btn" data-qooti-package="6 oy — 199 000 so‘m">Get started</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<hr class="div"/>
+
+<!-- FOOTER -->
+<div class="footer-wrap">
+  <div class="footer-top">
+    <div>
+      <a href="/" class="footer-logo"><img src="assets/bloot.png" alt="bloot"/></a>
+      <p class="footer-tagline">Your vault for visual inspiration. Built for creatives who move fast.</p>
+    </div>
+    <div>
+      <p class="footer-heading">Product</p>
+      <ul class="footer-links">
+        <li><a href="#download">Download</a></li>
+        <li><a href="#pricing">Pricing</a></li>
+        <li><a href="#">Changelog</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="footer-heading">Company</p>
+      <ul class="footer-links">
+        <li><a href="#">About</a></li>
+        <li><a href="#">Blog</a></li>
+        <li><a href="#">Contact</a></li>
+      </ul>
+    </div>
+    <div>
+      <p class="footer-heading">Legal</p>
+      <ul class="footer-links">
+        <li><a href="#">Privacy Policy</a></li>
+        <li><a href="#">Terms of Service</a></li>
+        <li><a href="#">License</a></li>
+      </ul>
+    </div>
+  </div>
+  <div class="footer-bottom">
+    <p class="footer-copy">© 2026 bloot. All rights reserved.</p>
+    <div class="footer-social">
+      <a href="#">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M21 5L9 12M21 5l-6 16-6-9-9-3 21-4z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Telegram
+      </a>
+      <a href="#">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 4l16 16M4 20L20 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        Twitter
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Scroll reveal
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
+  }, { threshold: 0.07, rootMargin: '0px 0px -32px 0px' });
+  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+
+  // Logged-in users: pricing "Get started" → Telegram @blootsupport (same template as dashboard billing)
+  function blootTelegramPurchaseUrl(username, publicId, packageLine) {
+    var u = (username && String(username).trim()) || '—';
+    var id = (publicId && String(publicId).trim()) || '—';
+    var body = 'Assalomu alaykum, bloot Support jamoasi!\n\nMen bloot akkauntim orqali qooti uchun to‘lov qilmoqchiman.\n\nbloot username: ' + u + '\nbloot id: ' + id + '\n\nTanlangan paket: ' + packageLine + '\n\nIltimos, to‘lov bo‘yicha yo‘riqnoma yoki keyingi qadamlarni yuboring.\n\nRahmat!';
+    return 'https://t.me/blootsupport?text=' + encodeURIComponent(body);
+  }
+  fetch('/api/auth/me', { credentials: 'include' })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      var user = data && data.user;
+      if (!user || !user.username) return;
+      var publicId = user.publicId || user.blootUserId;
+      document.querySelectorAll('a.plan-btn[data-qooti-package]').forEach(function(btn) {
+        var line = btn.getAttribute('data-qooti-package');
+        if (!line) return;
+        btn.href = blootTelegramPurchaseUrl(user.username, publicId, line);
+        btn.target = '_blank';
+        btn.rel = 'noopener noreferrer';
+      });
+    })
+    .catch(function() {});
+</script>
+</body>
+</html>

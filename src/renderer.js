@@ -258,9 +258,118 @@ const GRID_INITIAL_LIMIT = 56;
 const GRID_LOAD_MORE_LIMIT = 56;
 /** Matches SQLite clamp in list_inspirations — used to load an entire collection in pages. */
 const LIST_INSPIRATIONS_MAX_LIMIT = 500;
+const SHORT_FORM_AUTOFILL_MAX_EXTRA_PAGES = 16;
+const GLOBAL_LOADING_MIN_VISIBLE_MS = 2000;
+const GLOBAL_LOADING_FINISH_MS = 220;
+
+const globalLoadingUi = {
+  activeCount: 0,
+  visibleSince: 0,
+  hideTimer: null,
+  progressTimer: null,
+  progress: 0,
+};
+
+function getGlobalLoadingBarElements() {
+  return {
+    bar: document.getElementById("globalLoadingBar"),
+    fill: document.getElementById("globalLoadingBarFill"),
+  };
+}
+
+function setGlobalLoadingProgress(progress) {
+  const { fill } = getGlobalLoadingBarElements();
+  if (!fill) return;
+  const clamped = Math.max(0, Math.min(1, Number(progress) || 0));
+  fill.style.setProperty("--global-loading-progress", String(clamped));
+}
+
+function startGlobalLoadingProgressLoop() {
+  if (globalLoadingUi.progressTimer) return;
+  globalLoadingUi.progressTimer = setInterval(() => {
+    // Keep moving, but never hit 100% until work is done.
+    globalLoadingUi.progress = Math.min(0.92, globalLoadingUi.progress + Math.max(0.01, (0.92 - globalLoadingUi.progress) * 0.14));
+    setGlobalLoadingProgress(globalLoadingUi.progress);
+  }, 120);
+}
+
+function stopGlobalLoadingProgressLoop() {
+  if (globalLoadingUi.progressTimer) {
+    clearInterval(globalLoadingUi.progressTimer);
+    globalLoadingUi.progressTimer = null;
+  }
+}
+
+function showGlobalLoadingBar() {
+  const { bar } = getGlobalLoadingBarElements();
+  if (!bar) return;
+  if (globalLoadingUi.hideTimer) {
+    clearTimeout(globalLoadingUi.hideTimer);
+    globalLoadingUi.hideTimer = null;
+  }
+  globalLoadingUi.visibleSince = Date.now();
+  globalLoadingUi.progress = 0.08;
+  setGlobalLoadingProgress(globalLoadingUi.progress);
+  bar.classList.remove("hidden");
+  startGlobalLoadingProgressLoop();
+}
+
+function hideGlobalLoadingBarWithMinDuration() {
+  if (globalLoadingUi.activeCount > 0) return;
+  const elapsed = Date.now() - globalLoadingUi.visibleSince;
+  const waitMs = Math.max(0, GLOBAL_LOADING_MIN_VISIBLE_MS - elapsed);
+  if (globalLoadingUi.hideTimer) clearTimeout(globalLoadingUi.hideTimer);
+  globalLoadingUi.hideTimer = setTimeout(() => {
+    const { bar } = getGlobalLoadingBarElements();
+    stopGlobalLoadingProgressLoop();
+    globalLoadingUi.progress = 1;
+    setGlobalLoadingProgress(1);
+    globalLoadingUi.hideTimer = setTimeout(() => {
+      if (globalLoadingUi.activeCount > 0) return;
+      bar?.classList.add("hidden");
+      globalLoadingUi.progress = 0;
+      setGlobalLoadingProgress(0);
+      globalLoadingUi.hideTimer = null;
+    }, GLOBAL_LOADING_FINISH_MS);
+  }, waitMs);
+}
+
+function startGlobalLoadingTask() {
+  globalLoadingUi.activeCount += 1;
+  if (globalLoadingUi.activeCount === 1) {
+    showGlobalLoadingBar();
+  }
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    globalLoadingUi.activeCount = Math.max(0, globalLoadingUi.activeCount - 1);
+    if (globalLoadingUi.activeCount === 0) {
+      hideGlobalLoadingBarWithMinDuration();
+    }
+  };
+}
 /** Server clamps list_inspirations limit to 500; use max pages for palette backfill. */
 const PALETTE_BACKFILL_PAGE_SIZE = 500;
 let collectionsPageRows = [];
+let storeCollectionsIndex = [];
+let storeApplyBannerConfig = null;
+let storeCommercialBannerConfig = null;
+const storeDownloadStateById = new Map();
+let storeProgressUnsub = null;
+let storeHeroActiveIndex = 0;
+let storeHeroCycleTimer = null;
+let storeHeroCycleCount = 0;
+let storeHeroRenderState = null;
+let storeHideBannersForOnboarding = false;
+let openStoreAfterSurvey = false;
+let onboardingRecommendedStoreIds = new Set();
+let onboardingSessionInstalledStoreIds = new Set();
+const STORE_INSTALLED_IDS_KEY = "storeInstalledCollectionIds";
+const STORE_INSTALLED_LINKS_KEY = "storeInstalledCollectionLinks";
+const ONBOARDING_COMPLETED_KEY = "onboarding_completed";
+const CONFETTI_SHOWN_KEY = "confetti_shown";
+const STORE_ONBOARDING_CONNECTIVITY_URL = "https://raw.githubusercontent.com/blootapp/qooti-collections/main/index.json";
 let notificationsLoading = false;
 let notificationReadIds = new Set();
 let notificationLastFetchedId = "";
@@ -282,9 +391,10 @@ const OCR_INDEX_CLAIM_BATCH = 2;
 const OCR_INDEX_YIELD_MS = 20;
 const OCR_DETECT_TIMEOUT_MS = 45000;
 let ocrWorkerPromise = null;
-let ocrUseBackendOnly = false;
 let ocrIndexRunning = false;
 let ocrIndexRerunRequested = false;
+const STARTUP_DIAGNOSTICS_ENABLED = true;
+let startupDeferredTasksScheduled = false;
 let ocrIndexSessionPaused = false;
 let ocrIndicatorDismissed = false;
 let vaultImageDiagLogged = false;
@@ -307,6 +417,7 @@ let updaterUiState = {
   lastTransitionAt: null,
 };
 let updaterToastKey = "";
+let simulateUpdateOnNextManualCheck = false;
 const downloadIndicatorState = {
   active: false,
   label: "Downloading video…",
@@ -317,9 +428,24 @@ const downloadIndicatorState = {
 };
 let bottomCenterToastVisible = false;
 
+function startupDiag(stage, details = {}) {
+  if (!STARTUP_DIAGNOSTICS_ENABLED) return;
+  const elapsed = Number(performance.now()).toFixed(1);
+  try {
+    console.info("[qooti][startup-diag]", stage, { elapsed_ms: elapsed, ...details });
+  } catch (_) {}
+}
+
 function isUpdateIndicatorActive(detail = updaterUiState) {
   const phase = detail?.phase || "idle";
-  return !detail?.hidden && !["idle", "up_to_date"].includes(phase);
+  const phasesThatUseBottomIndicator = new Set([
+    "downloading",
+    "installing",
+    "downloaded_ready_to_install",
+    "restart_required",
+    "restarting",
+  ]);
+  return !detail?.hidden && phasesThatUseBottomIndicator.has(phase);
 }
 
 function isOcrIndicatorActive() {
@@ -642,13 +768,6 @@ async function ensureOcrWorker() {
 async function runOcrForCandidate(candidate) {
   if (!candidate?.id || !candidate?.image_path) return;
 
-  // If worker already proved broken this session, go straight to backend OCR.
-  if (ocrUseBackendOnly) {
-    ocrLog("candidate_backend_only", { id: candidate.id });
-    await runBackendOcrForCandidate(candidate);
-    return;
-  }
-
   let src = "";
   try {
     src = await resolveOcrCandidateSrc(candidate);
@@ -668,11 +787,9 @@ async function runOcrForCandidate(candidate) {
   });
   const config = await getOcrAssetConfig();
   if (config?.preferMainThread) {
-    ocrUseBackendOnly = true;
-    ocrLog("worker_skipped_prefer_main_thread", {
+    ocrLog("ocr_using_main_thread", {
       id: candidate.id,
       source: config.source || "unknown",
-      workerUrl: config.workerUrl || "",
     });
     await runBackendOcrForCandidate(candidate);
     return;
@@ -713,8 +830,7 @@ async function runOcrForCandidate(candidate) {
   } catch (err) {
     const errMsg = String(err?.message || err || "");
     if (shouldFallbackFromWorkerError(errMsg)) {
-      ocrUseBackendOnly = true;
-      ocrWarn("worker_unavailable_switching_backend_only", {
+      ocrWarn("worker_failed_fallback_main_thread", {
         id: candidate.id,
         error: errMsg,
       });
@@ -1377,7 +1493,7 @@ async function waitForQootiApi(timeoutMs = 8000) {
 }
 
 function applyTranslations() {
-  const lang = state.settings?.language || "en";
+  const lang = getCurrentUiLang();
   document.documentElement.lang = lang === "uz" ? "uz" : "en";
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const k = el.getAttribute("data-i18n");
@@ -1400,14 +1516,68 @@ function applyTranslations() {
     el.title = t("language.toggle", lang);
     el.setAttribute("aria-label", t("language.toggle", lang));
   });
+  syncLicenseOfflineGateCopy();
+  syncStoreOnboardingLanguageUi();
+  updateStoreMenuAvailability();
 }
 
 function toggleSurveyProfileLanguage() {
   const next = state.settings?.language === "uz" ? "en" : "uz";
-  state.settings.language = next;
-  saveSetting("language", next).catch(() => {});
+  setSurveyProfileLanguage(next);
+}
+
+function setSurveyProfileLanguage(next) {
+  const normalized = String(next || "").toLowerCase() === "uz" ? "uz" : "en";
+  if (state.settings?.language === normalized) {
+    closeStoreOnboardingLanguageMenu();
+    return;
+  }
+  state.settings.language = normalized;
+  saveSetting("language", normalized).catch(() => {});
   applyTranslations();
+  syncStoreOnboardingLanguageUi();
+  closeStoreOnboardingLanguageMenu();
   document.dispatchEvent(new CustomEvent("app:languageChanged"));
+}
+
+function syncStoreOnboardingLanguageUi() {
+  const lang = String(state.settings?.language || "en").toLowerCase() === "uz" ? "uz" : "en";
+  const codeEl = $("#storeOnboardingLangCode");
+  if (codeEl) codeEl.textContent = lang.toUpperCase();
+  document.querySelectorAll("#storeOnboardingLangMenu .store-onboarding-lang-option").forEach((el) => {
+    const active = String(el.getAttribute("data-lang") || "").toLowerCase() === lang;
+    el.classList.toggle("is-active", active);
+    el.setAttribute("aria-checked", active ? "true" : "false");
+  });
+}
+
+function closeStoreOnboardingLanguageMenu() {
+  const menu = $("#storeOnboardingLangMenu");
+  const toggle = $("#storeOnboardingLangToggle");
+  if (menu) menu.classList.add("hidden");
+  if (toggle) toggle.setAttribute("aria-expanded", "false");
+}
+
+function toggleStoreOnboardingLanguageMenu() {
+  const menu = $("#storeOnboardingLangMenu");
+  const toggle = $("#storeOnboardingLangToggle");
+  if (!menu || !toggle) return;
+  const isOpen = !menu.classList.contains("hidden");
+  if (isOpen) {
+    closeStoreOnboardingLanguageMenu();
+    return;
+  }
+  syncStoreOnboardingLanguageUi();
+  menu.classList.remove("hidden");
+  toggle.setAttribute("aria-expanded", "true");
+}
+
+function handleStoreOnboardingLanguageSelection(event) {
+  const option = event.target.closest(".store-onboarding-lang-option");
+  if (!option) return;
+  const lang = option.getAttribute("data-lang");
+  if (!lang) return;
+  setSurveyProfileLanguage(lang);
 }
 
 function loadSettingsUI() {
@@ -1443,10 +1613,7 @@ function loadSettingsUI() {
   set("settingQuickTagsDefaultEnabled", s.quickTagsDefaultEnabled);
   set("settingLanguage", s.language || "en");
   set("settingShowExtensionCollectionPicker", s.extensionShowCollectionPicker ?? "true");
-  const settingsAccountUsernameInput = $("#settingsAccountUsernameInput");
-  if (settingsAccountUsernameInput && document.activeElement !== settingsAccountUsernameInput) {
-    settingsAccountUsernameInput.value = getProfileName();
-  }
+  set("settingLaunchAtLogin", s.launchAtLogin ?? "true");
   updateProfileUi();
   syncSizeControlModeUi();
   applyUiScale();
@@ -1574,7 +1741,6 @@ function formatLicenseDate(ts) {
 
 function getLicenseStatusMessage(result, lang = state.settings?.language || "en") {
   const status = String(result?.status || "").toLowerCase();
-  if (result?.used_cached) return t("license.cachedOffline", lang);
   if (status === "missing") return "";
   if (status === "revoked") return t("license.revoked", lang);
   if (status === "expired") return t("license.expired", lang);
@@ -1586,15 +1752,51 @@ function getLicenseStatusMessage(result, lang = state.settings?.language || "en"
 function getLicenseSettingsStatusLabel(cache, lang = state.settings?.language || "en") {
   const status = String(cache?.status || "").toLowerCase();
   if (cache?.valid) {
-    if (cache?.used_cached || status === "network_error" || status === "offline_cache") {
-      return t("license.activeCached", lang);
-    }
     return t("settings.active", lang);
   }
   if (status === "revoked") return t("license.revoked", lang);
   if (status === "expired") return t("license.expired", lang);
   if (status === "device_limit") return t("license.deviceLimit", lang);
   return t("settings.noLicense", lang);
+}
+
+function hasInternetConnection() {
+  return typeof navigator === "undefined" ? true : navigator.onLine !== false;
+}
+
+function isTruthySetting(value, fallback = false) {
+  if (value == null) return fallback;
+  const normalized = String(value).trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  return fallback;
+}
+
+function isOnboardingCompleted() {
+  return isTruthySetting(state.settings?.[ONBOARDING_COMPLETED_KEY], true);
+}
+
+function hasShownOnboardingConfetti() {
+  return isTruthySetting(state.settings?.[CONFETTI_SHOWN_KEY], false);
+}
+
+function updateStoreMenuAvailability() {
+  const btn = document.getElementById("menuStore");
+  if (!btn) return;
+  const lang = state.settings?.language || "en";
+  btn.disabled = false;
+  btn.classList.remove("dropdown__item--disabled");
+  btn.setAttribute("aria-disabled", "false");
+  btn.title = t("store.title", lang);
+}
+
+function handleNetworkAvailabilityChanged() {
+  updateStoreMenuAvailability();
+  const storeView = document.getElementById("storeView");
+  const isStoreVisible = !!storeView && !storeView.classList.contains("hidden");
+  if (storeHideBannersForOnboarding && isStoreVisible && !hasInternetConnection()) {
+    setStoreOnboardingOfflineGateVisible(true);
+  }
 }
 
 async function saveSetting(key, value) {
@@ -1903,7 +2105,6 @@ function initNotificationsSystem() {
 
 const PROFILE_NAME_KEY = "profileName";
 const PROFILE_IMAGE_KEY = "profileImageDataUrl";
-const PROFILE_NAME_MAX_LEN = 30;
 
 function normalizeProfileName(input) {
   return String(input || "").replace(/\s+/g, " ").trim();
@@ -1916,13 +2117,6 @@ function getProfileName() {
 function getProfileImageDataUrl() {
   const raw = state.settings?.[PROFILE_IMAGE_KEY];
   return typeof raw === "string" ? raw.trim() : "";
-}
-
-function validateProfileName(name) {
-  const n = normalizeProfileName(name);
-  if (!n) return "Username is required.";
-  if (n.length > PROFILE_NAME_MAX_LEN) return `Username must be ${PROFILE_NAME_MAX_LEN} characters or less.`;
-  return "";
 }
 
 function profileInitial(name) {
@@ -1965,22 +2159,10 @@ function updateProfileUi() {
   renderAvatar($("#profileMenuAvatar"), { name, imageDataUrl });
   renderAvatar($("#settingsAccountAvatar"), { name, imageDataUrl });
   setText($("#profileMenuName"), name);
-  const settingsNameInput = $("#settingsAccountUsernameInput");
-  if (settingsNameInput && document.activeElement !== settingsNameInput) {
-    settingsNameInput.value = name === "User" && !getProfileName() ? "" : getProfileName();
+  const displayNameEl = $("#settingsAccountDisplayName");
+  if (displayNameEl) {
+    displayNameEl.textContent = getProfileName() ? name : "—";
   }
-  syncSettingsAccountUsernameEditor();
-}
-
-function syncSettingsAccountUsernameEditor() {
-  const input = $("#settingsAccountUsernameInput");
-  const saveBtn = $("#settingsAccountUsernameSave");
-  if (!input || !saveBtn) return;
-  const normalized = normalizeProfileName(input.value);
-  const validation = validateProfileName(normalized);
-  const unchanged = normalized === getProfileName();
-  input.classList.toggle("is-invalid", Boolean(input.value) && Boolean(validation));
-  saveBtn.disabled = Boolean(validation) || unchanged;
 }
 
 function canvasToDataUrl(canvas) {
@@ -2093,116 +2275,6 @@ function showProfileImageCropModal(file) {
 
     document.body.appendChild(wrap);
   });
-}
-
-function showProfileSetupView() {
-  return new Promise((resolve) => {
-    const appEl = document.getElementById("app");
-    const view = $("#profileSetupView");
-    const avatarBtn = $("#profileSetupAvatarBtn");
-    const previewEl = $("#profileSetupAvatarPreview");
-    const imageInput = $("#profileSetupImageInput");
-    const nameInput = $("#profileSetupName");
-    const saveBtn = $("#profileSetupSaveBtn");
-    const errorEl = $("#profileSetupError");
-    if (!appEl || !view || !avatarBtn || !previewEl || !imageInput || !nameInput || !saveBtn || !errorEl) {
-      resolve();
-      return;
-    }
-
-    let imageDataUrl = getProfileImageDataUrl();
-    let touched = false;
-
-    appEl.classList.add("app--profile-setup");
-    view.classList.remove("hidden", "profile-setup-view--closing");
-    nameInput.value = getProfileName();
-
-    const sync = () => {
-      const normalized = normalizeProfileName(nameInput.value);
-      const validation = validateProfileName(normalized);
-      saveBtn.disabled = Boolean(validation);
-      nameInput.classList.toggle("is-invalid", touched && Boolean(validation));
-      if (touched && validation) {
-        errorEl.textContent = validation;
-        errorEl.classList.remove("hidden");
-      } else {
-        errorEl.classList.add("hidden");
-        errorEl.textContent = "";
-      }
-      renderAvatar(previewEl, { name: normalized || nameInput.value || "User", imageDataUrl });
-    };
-
-    const cleanup = () => {
-      avatarBtn.onclick = null;
-      imageInput.onchange = null;
-      nameInput.oninput = null;
-      nameInput.onblur = null;
-      nameInput.onkeydown = null;
-      saveBtn.onclick = null;
-    };
-
-    const finish = async () => {
-      view.classList.add("profile-setup-view--closing");
-      await new Promise((r) => setTimeout(r, 180));
-      appEl.classList.remove("app--profile-setup");
-      view.classList.add("hidden");
-      view.classList.remove("profile-setup-view--closing");
-      cleanup();
-      resolve();
-    };
-
-    avatarBtn.onclick = () => imageInput.click();
-    imageInput.onchange = async () => {
-      const file = imageInput.files?.[0];
-      if (!file) return;
-      const cropped = await showProfileImageCropModal(file);
-      imageInput.value = "";
-      if (!cropped) return;
-      imageDataUrl = cropped;
-      sync();
-    };
-
-    nameInput.oninput = () => {
-      touched = true;
-      sync();
-    };
-    nameInput.onblur = () => {
-      touched = true;
-      sync();
-    };
-    nameInput.onkeydown = (e) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        saveBtn.click();
-      }
-    };
-    saveBtn.onclick = async () => {
-      touched = true;
-      sync();
-      const normalized = normalizeProfileName(nameInput.value);
-      const validation = validateProfileName(normalized);
-      if (validation) {
-        nameInput.focus();
-        return;
-      }
-      saveBtn.disabled = true;
-      await saveSetting(PROFILE_NAME_KEY, normalized);
-      await saveSetting(PROFILE_IMAGE_KEY, imageDataUrl || "");
-      state.settings[PROFILE_NAME_KEY] = normalized;
-      state.settings[PROFILE_IMAGE_KEY] = imageDataUrl || "";
-      updateProfileUi();
-      await finish();
-    };
-
-    sync();
-    setTimeout(() => nameInput.focus(), 40);
-  });
-}
-
-async function ensureProfileSetup() {
-  const currentName = getProfileName();
-  if (!validateProfileName(currentName)) return;
-  await showProfileSetupView();
 }
 
 // ---------- Onboarding survey ----------
@@ -2763,142 +2835,24 @@ function showSurveyView() {
       } catch (e) {
         console.warn("[qooti] survey save failed", e);
       }
-      stepEl.setAttribute("aria-hidden", "true");
-      stepsEl.classList.add("hidden");
-      if (surveyInner) surveyInner.classList.add("hidden");
-      successScreen.classList.remove("hidden");
-      successScreen.setAttribute("aria-hidden", "false");
 
-      await initCollectionsScreen();
+      try {
+        const index = await window.qooti?.fetchFreeCollectionsIndex?.();
+        const free = Array.isArray(index?.free) ? index.free : [];
+        const role = answers.creative_role || "Other Creative Work";
+        onboardingRecommendedStoreIds = new Set(
+          free
+            .filter((collection) => isRecommendedForRole(collection, role))
+            .map((collection) => String(collection?.id || ""))
+            .filter(Boolean)
+        );
+      } catch (err) {
+        console.warn("[survey] failed to prepare onboarding recommendations", err);
+        onboardingRecommendedStoreIds = new Set();
+      }
 
-      continueBtn.onclick = async () => {
-        console.log("[collections] continue clicked");
-        const selectedIds = Array.from(
-          recommendedList.querySelectorAll(".survey-library-card__input:checked")
-        ).map((el) => String(el.dataset.id || ""));
-        console.log("[collections] selected ids:", selectedIds);
-        console.log("[collections] all collections:", allCollections);
-        if (!selectedIds.length) {
-          console.warn("[collections] nothing selected");
-          return;
-        }
-        const selectedCollections = allCollections
-          .filter((c) =>
-            recommendedList.querySelector(`.survey-library-card__input[data-id="${String(c.id)}"]`)?.checked
-          )
-          .sort((a, b) => Number(a.file_size_mb || 0) - Number(b.file_size_mb || 0));
-        console.log("[collections] filtered selected:", selectedCollections);
-
-        if (!selectedCollections.length) {
-          console.error("[collections] selected ids exist but no matching collections found");
-          console.error("[collections] this means allCollections is empty or ids dont match");
-          return;
-        }
-        const first = selectedCollections[0];
-        const restCount = Math.max(0, selectedCollections.length - 1);
-        console.log("[collections] first to download:", first);
-        console.log("[collections] download_url:", first?.download_url);
-        console.log("[collections] rest to download:", restCount);
-        if (!first?.download_url) {
-          console.error("[collections] MISSING download_url — index.json is incomplete");
-          console.error("[collections] missing download_url for:", first?.id);
-          alert("download_url topilmadi. index.json ni tekshiring.");
-          continueBtn.disabled = false;
-          return;
-        }
-
-        continueBtn.disabled = true;
-        const langNow2 = state.settings?.language || "en";
-        let stopProgress = null;
-        const progressModal = document.createElement("div");
-        progressModal.className = "app-modal app-modal--confirm";
-        progressModal.innerHTML = `
-          <div class="app-modal__backdrop"></div>
-          <div class="app-modal__dialog app-modal__dialog--wide">
-            <div class="app-modal__body">
-              <div class="app-modal__message">${escapeHtml(t("survey.libraryBarHint", langNow2) || "Downloading packs…")}</div>
-              <div id="onboardingCollectionProgressWrap" class="pack-export-progress" aria-live="polite">
-                <div
-                  class="pack-export-progress__track"
-                  role="progressbar"
-                  aria-valuemin="0"
-                  aria-valuemax="100"
-                  aria-valuenow="0"
-                >
-                  <div id="onboardingCollectionProgressBar" class="pack-export-progress__fill" style="width:0%"></div>
-                </div>
-                <div id="onboardingCollectionProgressLabel" class="pack-export-progress__label"></div>
-              </div>
-            </div>
-          </div>
-        `;
-        const progressBar = progressModal.querySelector("#onboardingCollectionProgressBar");
-        const progressTrack = progressModal.querySelector(".pack-export-progress__track");
-        const progressLabel = progressModal.querySelector("#onboardingCollectionProgressLabel");
-        const setProgress = ({ pct = 0, label = "" } = {}) => {
-          const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
-          if (progressBar) progressBar.style.width = `${p}%`;
-          progressTrack?.setAttribute("aria-valuenow", String(p));
-          if (progressLabel) progressLabel.textContent = String(label || "");
-        };
-        const mountProgress = () => {
-          if (!document.body.contains(progressModal)) document.body.appendChild(progressModal);
-        };
-        const unmountProgress = () => {
-          if (document.body.contains(progressModal)) document.body.removeChild(progressModal);
-        };
-        try {
-          mountProgress();
-          const currentIds = new Set(selectedCollections.map((c) => String(c.id)));
-          stopProgress =
-            typeof window.qooti?.onCollectionProgress === "function"
-              ? window.qooti.onCollectionProgress((payload) => {
-                  const id = String(payload?.id || "");
-                  if (!currentIds.has(id)) return;
-                  const status = String(payload?.status || "");
-                  const pct = Number(payload?.pct || 0);
-                  const col = selectedCollections.find((c) => String(c.id) === id);
-                  const name = col ? localizedCollectionName(col, langNow2) : id;
-                  const statusText =
-                    status === "importing"
-                      ? `Importing “${name}”…`
-                      : status === "complete"
-                        ? `Done: “${name}”`
-                        : `Downloading “${name}”…`;
-                  setProgress({ pct, label: statusText });
-                })
-              : () => {};
-          setProgress({ pct: 0, label: "Starting…" });
-          console.log("[collections] invoking download_and_import_collection...");
-          for (const col of selectedCollections) {
-            if (!col?.download_url) {
-              console.error("[collections] missing download_url for:", col?.id);
-              continue;
-            }
-            console.log("[collections] invoking item:", {
-              id: String(col.id || ""),
-              download_url: String(col.download_url || ""),
-            });
-            setProgress({ pct: 0, label: `Downloading “${localizedCollectionName(col, langNow2)}”…` });
-            await window.qooti?.downloadAndImportCollection?.(String(col.id), String(col.download_url || ""));
-          }
-          console.log("[collections] download success");
-          await refreshData();
-        } catch (e) {
-          console.error("[collections] invoke failed:", e);
-          alert(`Xatolik: ${e}`);
-        } finally {
-          try {
-            if (typeof stopProgress === "function") stopProgress();
-          } catch (_) {}
-          unmountProgress();
-        }
-        successScreen.classList.add("hidden");
-        successScreen.setAttribute("aria-hidden", "true");
-        if (surveyInner) surveyInner.classList.remove("hidden");
-        stepsEl.classList.remove("hidden");
-        cleanup();
-      };
+      openStoreAfterSurvey = true;
+      cleanup();
     };
 
     backBtn.onclick = () => {
@@ -2956,6 +2910,11 @@ function wireSettingsControls() {
     applyTheme();
   });
   $("#settingsCheckForUpdates")?.addEventListener("click", async () => {
+    if (simulateUpdateOnNextManualCheck) {
+      simulateUpdateOnNextManualCheck = false;
+      simulateUpdateFoundState();
+      return;
+    }
     const phase = updaterUiState?.phase || "idle";
     if (phase === "update_available") {
       window.qooti?.downloadUpdate?.().catch((e) => console.warn("[qooti] downloadUpdate failed", e?.message || e));
@@ -2983,42 +2942,6 @@ function wireSettingsControls() {
       toast(t("settings.profilePictureSaveFailed", lang), { variant: "error" });
       console.warn("[qooti] settings avatar update failed", e?.message || e);
     }
-  });
-  const settingsAccountUsernameInput = $("#settingsAccountUsernameInput");
-  const settingsAccountUsernameSave = $("#settingsAccountUsernameSave");
-  const saveAccountUsername = async () => {
-    if (!settingsAccountUsernameInput || !settingsAccountUsernameSave) return;
-    const lang = state.settings?.language || "en";
-    const normalized = normalizeProfileName(settingsAccountUsernameInput.value);
-    const validation = validateProfileName(normalized);
-    syncSettingsAccountUsernameEditor();
-    if (validation) {
-      settingsAccountUsernameInput.focus();
-      return;
-    }
-    settingsAccountUsernameSave.disabled = true;
-    try {
-      await saveSetting(PROFILE_NAME_KEY, normalized);
-      state.settings[PROFILE_NAME_KEY] = normalized;
-      updateProfileUi();
-      toast(t("settings.usernameSaved", lang), { variant: "success" });
-    } catch (e) {
-      toast(t("settings.usernameSaveFailed", lang), { variant: "error" });
-      console.warn("[qooti] settings username update failed", e?.message || e);
-    } finally {
-      syncSettingsAccountUsernameEditor();
-    }
-  };
-  settingsAccountUsernameInput?.addEventListener("input", () => {
-    syncSettingsAccountUsernameEditor();
-  });
-  settingsAccountUsernameInput?.addEventListener("keydown", (e) => {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    saveAccountUsername();
-  });
-  settingsAccountUsernameSave?.addEventListener("click", () => {
-    saveAccountUsername();
   });
   $("#settingRunFullOcr")?.addEventListener("click", async () => {
     const btn = $("#settingRunFullOcr");
@@ -3086,6 +3009,24 @@ function wireSettingsControls() {
   bind("settingShowQuickTagsInToast", "showQuickTagsInToast");
   bind("settingLanguage", "language", () => applyTranslations());
   bind("settingShowExtensionCollectionPicker", "extensionShowCollectionPicker");
+  $("#settingLaunchAtLogin")?.addEventListener("change", async () => {
+    const toggle = $("#settingLaunchAtLogin");
+    if (!toggle) return;
+    const enabled = !!toggle.checked;
+    const value = enabled ? "true" : "false";
+    state.settings.launchAtLogin = value;
+    try {
+      if (window.qooti?.setLaunchAtLoginEnabled) {
+        await window.qooti.setLaunchAtLoginEnabled(enabled);
+      } else {
+        await saveSetting("launchAtLogin", value);
+      }
+    } catch (e) {
+      console.warn("[qooti] set launchAtLogin failed:", e?.message || e);
+      toggle.checked = !enabled;
+      state.settings.launchAtLogin = toggle.checked ? "true" : "false";
+    }
+  });
   bind("settingDefaultClickBehavior", "defaultClickBehavior");
   bind("settingEnableContextMenu", "enableContextMenu");
   bind("settingConfirmBeforeDelete", "confirmBeforeDelete");
@@ -3869,12 +3810,14 @@ function showCollectionContextMenu(e, row) {
             await window.qooti.deleteInspiration(mediaId);
           }
           await window.qooti.deleteCollection(row.collection.id);
+          await unmarkStoreCollectionInstalledByLocalCollectionId(row.collection.id);
           toast(`Deleted collection and ${mediaIds.length} media item${mediaIds.length === 1 ? "" : "s"}`, {
             durationMs: 3200,
             variant: "success"
           });
         } else {
           await window.qooti.deleteCollection(row.collection.id);
+          await unmarkStoreCollectionInstalledByLocalCollectionId(row.collection.id);
           const unsortedLabel = t("collections.unsorted", colLang);
           toast(`Collection deleted. Media moved to ${unsortedLabel}.`, {
             durationMs: 3200,
@@ -5225,6 +5168,7 @@ function renderSettingsUpdateSection(detail = updaterUiState) {
   const labelEl = $("#settingsUpdateStatusLabel");
   const metaEl = $("#settingsUpdateStatusMeta");
   const actionBtn = $("#settingsCheckForUpdates");
+  const cardEl = actionBtn?.closest(".settings-update-card") || $("#settingsPanelLicense .settings-update-card");
   if (!labelEl || !metaEl) return;
 
   const lang = state.settings?.language || "en";
@@ -5275,6 +5219,19 @@ function renderSettingsUpdateSection(detail = updaterUiState) {
       setText(actionBtn, t("settings.checkForUpdates", lang));
     }
   }
+
+  const hasUpdateFound = [
+    "update_available",
+    "downloading",
+    "installing",
+    "downloaded_ready_to_install",
+    "restart_required",
+    "restarting",
+  ].includes(phase);
+  cardEl?.classList.toggle("settings-update-card--available", hasUpdateFound);
+  labelEl.classList.toggle("settings-update-card__title--available", hasUpdateFound);
+  metaEl.classList.toggle("settings-update-card__meta--available", hasUpdateFound);
+  actionBtn?.classList.toggle("settings-update-card__action--available", hasUpdateFound);
 }
 
 function renderUpdateIndicator(detail = updaterUiState) {
@@ -5357,6 +5314,34 @@ function applyUpdaterState(detail = {}) {
   renderSettingsUpdateSection(updaterUiState);
 }
 
+function guessNextPatchVersion(versionText) {
+  const raw = String(versionText || "").trim();
+  const match = raw.match(/^v?(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return "0.0.1";
+  const major = Number(match[1]) || 0;
+  const minor = Number(match[2]) || 0;
+  const patch = Number(match[3]) || 0;
+  return `${major}.${minor}.${patch + 1}`;
+}
+
+function simulateUpdateFoundState() {
+  const currentVersion = updaterUiState.currentVersion
+    || $("#settingsAppVersion")?.textContent?.trim()
+    || "0.0.0";
+  const availableVersion = guessNextPatchVersion(currentVersion);
+  applyUpdaterState({
+    phase: "update_available",
+    source: "manual",
+    hidden: false,
+    currentVersion,
+    availableVersion,
+    statusText: `Update ${availableVersion} is available`,
+    detailText: "Ready to download.",
+    progressPercent: 0,
+    error: null,
+  });
+}
+
 async function syncUpdaterStateFromBridge() {
   try {
     const detail = await window.qooti?.getUpdaterState?.();
@@ -5426,6 +5411,7 @@ let searchPastedVideoUrl = null;
 let delAllInProgress = false;
 let deleteSurveyCmdInProgress = false;
 let bltRangPaletteInProgress = false;
+let bltLogoutInProgress = false;
 
 /** Search-bar command: list all image/link rows with no palette, then extract sequentially. */
 async function handleBltRangPaletteBackfillCommand() {
@@ -5515,6 +5501,32 @@ async function handleDeleteSurveySearchCommand() {
     notifyMediaAdd(err?.message || "Could not remove survey data.", { variant: "error" });
   } finally {
     deleteSurveyCmdInProgress = false;
+  }
+}
+
+async function handleBltLogoutSearchCommand() {
+  if (bltLogoutInProgress) return;
+  if (typeof window.qooti?.clearLicenseCache !== "function") {
+    notifyMediaAdd("License logout is not available in this build.", { variant: "error" });
+    return;
+  }
+  bltLogoutInProgress = true;
+  try {
+    const ok = await showConfirm({
+      message: "Logout from this device license and return to activation screen?",
+      confirmLabel: "Logout",
+      cancelLabel: "Cancel",
+      danger: true,
+    });
+    if (!ok) return;
+    await window.qooti.clearLicenseCache();
+    notifyMediaAdd("Logged out from license.", { variant: "success" });
+    window.location.reload();
+  } catch (err) {
+    console.error("blt_logout clearLicenseCache error:", err);
+    notifyMediaAdd(err?.message || "Failed to logout from license.", { variant: "error" });
+  } finally {
+    bltLogoutInProgress = false;
   }
 }
 
@@ -5901,6 +5913,7 @@ function toggleDropdown(id, position) {
 }
 
 async function refreshData() {
+  const finishLoading = startGlobalLoadingTask();
   try {
     state.collections = await window.qooti.listCollections();
     collectionLabelCache.clear();
@@ -5909,6 +5922,8 @@ async function refreshData() {
     console.error("[qooti] refreshData failed:", e?.message || e);
     if (window.qooti?.debug) window.qooti.debug();
     throw e;
+  } finally {
+    finishLoading();
   }
 }
 
@@ -5924,20 +5939,30 @@ function updateSelectionBar() {
 }
 
 function showGrid() {
+  const storeView = $("#storeView");
+  if (storeView && !storeView.classList.contains("hidden") && !canExitOnboardingStore()) {
+    return;
+  }
   document.getElementById("app")?.classList.remove("app--collections-open");
   $("#gridView").classList.remove("hidden");
   applyTagFilterVisibility();
   $("#settingsView")?.classList.add("hidden");
   $("#historyView")?.classList.add("hidden");
   $("#collectionsView")?.classList.add("hidden");
+  $("#storeView")?.classList.add("hidden");
 }
 
 function showSettings() {
+  const storeView = $("#storeView");
+  if (storeView && !storeView.classList.contains("hidden") && !canExitOnboardingStore()) {
+    return;
+  }
   state.prevViewBeforeSettings = state.view;
   document.getElementById("app")?.classList.add("app--settings-open");
   $("#gridView").classList.add("hidden");
   $("#tagFilterBar")?.classList.add("hidden");
   $("#settingsView")?.classList.remove("hidden");
+  $("#storeView")?.classList.add("hidden");
   loadSettingsUI();
 }
 
@@ -5998,6 +6023,870 @@ async function loadCollectionsPageRows() {
     })
   );
   return rows.sort((a, b) => Number(b.collection?.updated_at || 0) - Number(a.collection?.updated_at || 0));
+}
+
+async function refreshAppAfterCollectionImport() {
+  await refreshData();
+
+  const currentView = String(state.view || "all");
+  if (currentView === "all" || currentView.startsWith("collection:")) {
+    await loadInspirations(false);
+  }
+
+  const collectionsView = $("#collectionsView");
+  if (collectionsView && !collectionsView.classList.contains("hidden")) {
+    collectionsPageRows = await loadCollectionsPageRows();
+    renderCollectionsPage(collectionsPageRows);
+  }
+}
+
+function getInstalledStoreCollectionIds() {
+  try {
+    const raw = String(state.settings?.[STORE_INSTALLED_IDS_KEY] || "[]");
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(
+      parsed
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    );
+  } catch (_) {
+    return new Set();
+  }
+}
+
+function getInstalledStoreCollectionLinks() {
+  try {
+    const raw = String(state.settings?.[STORE_INSTALLED_LINKS_KEY] || "{}");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [storeId, localId] of Object.entries(parsed)) {
+      const sid = String(storeId || "").trim();
+      const lid = String(localId || "").trim();
+      if (!sid || !lid) continue;
+      out[sid] = lid;
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
+function hasOnboardingSessionStarterPackInstalled() {
+  return onboardingSessionInstalledStoreIds.size > 0;
+}
+
+function canExitOnboardingStore() {
+  if (!storeHideBannersForOnboarding) return true;
+  if (hasOnboardingSessionStarterPackInstalled()) return true;
+  notifyMediaAdd(t("store.onboardingNeedPack", state.settings?.language || "en"), { variant: "warning" });
+  return false;
+}
+
+async function checkOnboardingStoreInternetConnection() {
+  try {
+    const response = await fetch(STORE_ONBOARDING_CONNECTIVITY_URL, {
+      method: "HEAD",
+      cache: "no-cache",
+    });
+    return !!response?.ok;
+  } catch (_) {
+    return false;
+  }
+}
+
+function setStoreOnboardingOfflineGateVisible(visible) {
+  const isVisible = !!visible;
+  const offlineGate = $("#storeOnboardingOfflineGate");
+  const storeContent = $("#storeContent");
+  const onboardingCta = $("#storeOnboardingCta");
+  const storeCount = $("#storeCount");
+  const storeSearch = $("#storeSearch");
+  if (offlineGate) offlineGate.classList.toggle("hidden", !isVisible);
+  if (storeContent) storeContent.classList.toggle("hidden", isVisible);
+  if (onboardingCta) onboardingCta.classList.toggle("hidden", isVisible || !storeHideBannersForOnboarding);
+  if (storeCount) storeCount.classList.toggle("hidden", isVisible && storeHideBannersForOnboarding);
+  if (storeSearch) storeSearch.disabled = isVisible && storeHideBannersForOnboarding;
+}
+
+function fireOnboardingConfetti() {
+  const canvas = document.createElement("canvas");
+  canvas.className = "onboarding-confetti-canvas";
+  canvas.style.cssText = "position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:9999;";
+  document.body.appendChild(canvas);
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    canvas.remove();
+    return;
+  }
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+
+  const colors = ["#4eabfb", "#32d74b", "#ff9f0a", "#bf5af2", "#ff6b6b", "#f0f0ee"];
+  const pieces = Array.from({ length: 140 }, () => ({
+    x: Math.random() * canvas.width,
+    y: -20 - Math.random() * 300,
+    w: 7 + Math.random() * 9,
+    h: 3 + Math.random() * 5,
+    color: colors[Math.floor(Math.random() * colors.length)],
+    rotation: Math.random() * Math.PI * 2,
+    rotSpeed: (Math.random() - 0.5) * 0.12,
+    vx: (Math.random() - 0.5) * 2.5,
+    vy: 2.5 + Math.random() * 3,
+    opacity: 1,
+  }));
+
+  const onResize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  };
+  window.addEventListener("resize", onResize);
+
+  function tick() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    let alive = false;
+
+    pieces.forEach((p) => {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.vy += 0.045;
+      p.rotation += p.rotSpeed;
+      if (p.y > canvas.height * 0.65) p.opacity -= 0.02;
+      if (p.opacity > 0) {
+        alive = true;
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, p.opacity);
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.rotation);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        ctx.restore();
+      }
+    });
+
+    if (alive) {
+      requestAnimationFrame(tick);
+    } else {
+      window.removeEventListener("resize", onResize);
+      canvas.remove();
+    }
+  }
+
+  requestAnimationFrame(tick);
+}
+
+function storeCollectionNameKey(name) {
+  return formatCollectionDisplayName(name || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function reconcileInstalledStoreCollectionState(currentStoreCollections = []) {
+  const installed = getInstalledStoreCollectionIds();
+  if (installed.size === 0) return installed;
+  const links = getInstalledStoreCollectionLinks();
+  const localCollections = Array.isArray(state.collections) ? state.collections : [];
+  const localIds = new Set(localCollections.map((c) => String(c?.id || "").trim()).filter(Boolean));
+  const localNameKeys = new Set(localCollections.map((c) => storeCollectionNameKey(c?.name || "")).filter(Boolean));
+  const keep = new Set();
+  let changed = false;
+  for (const sid of installed) {
+    const linkedLocalId = String(links[sid] || "").trim();
+    if (linkedLocalId) {
+      if (localIds.has(linkedLocalId)) {
+        keep.add(sid);
+      } else {
+        delete links[sid];
+        changed = true;
+        storeDownloadStateById.delete(sid);
+      }
+      continue;
+    }
+    const storeRow = (currentStoreCollections || []).find((c) => String(c?.id || "") === sid);
+    if (storeRow && localNameKeys.has(storeCollectionNameKey(storeRow?.name || ""))) {
+      keep.add(sid);
+    } else {
+      changed = true;
+      storeDownloadStateById.delete(sid);
+    }
+  }
+  if (changed) {
+    void saveSetting(STORE_INSTALLED_IDS_KEY, JSON.stringify(Array.from(keep)));
+    void saveSetting(STORE_INSTALLED_LINKS_KEY, JSON.stringify(links));
+  }
+  return keep;
+}
+
+async function markStoreCollectionInstalledById(collectionId, localCollectionId = "") {
+  const id = String(collectionId || "").trim();
+  if (!id) return;
+  const installed = getInstalledStoreCollectionIds();
+  if (!installed.has(id)) {
+    installed.add(id);
+    await saveSetting(STORE_INSTALLED_IDS_KEY, JSON.stringify(Array.from(installed)));
+  }
+  const localId = String(localCollectionId || "").trim();
+  if (localId) {
+    const links = getInstalledStoreCollectionLinks();
+    if (links[id] !== localId) {
+      links[id] = localId;
+      await saveSetting(STORE_INSTALLED_LINKS_KEY, JSON.stringify(links));
+    }
+  }
+}
+
+async function unmarkStoreCollectionInstalledById(collectionId) {
+  const id = String(collectionId || "").trim();
+  if (!id) return;
+  const installed = getInstalledStoreCollectionIds();
+  const hadInstalled = installed.delete(id);
+  storeDownloadStateById.delete(id);
+  const links = getInstalledStoreCollectionLinks();
+  const hadLink = Object.prototype.hasOwnProperty.call(links, id);
+  if (hadLink) delete links[id];
+  if (hadInstalled) {
+    await saveSetting(STORE_INSTALLED_IDS_KEY, JSON.stringify(Array.from(installed)));
+  }
+  if (hadLink) {
+    await saveSetting(STORE_INSTALLED_LINKS_KEY, JSON.stringify(links));
+  }
+  const storeView = $("#storeView");
+  if (storeView && !storeView.classList.contains("hidden")) {
+    renderStorePage();
+  }
+}
+
+async function unmarkStoreCollectionInstalledByLocalCollectionId(localCollectionId) {
+  const localId = String(localCollectionId || "").trim();
+  if (!localId) return;
+  const links = getInstalledStoreCollectionLinks();
+  const matchedStoreIds = Object.entries(links)
+    .filter(([, lid]) => String(lid || "").trim() === localId)
+    .map(([sid]) => sid);
+  if (matchedStoreIds.length > 0) {
+    for (const sid of matchedStoreIds) {
+      await unmarkStoreCollectionInstalledById(sid);
+    }
+    return;
+  }
+  // Legacy fallback where store/local IDs may have been identical.
+  await unmarkStoreCollectionInstalledById(localId);
+}
+
+function parseYouTubeVideoId(urlLike) {
+  const raw = String(urlLike || "").trim();
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    const host = (u.hostname || "").toLowerCase();
+    if (host.includes("youtu.be")) return (u.pathname || "").replace(/^\/+/, "").split("/")[0] || "";
+    if (host.includes("youtube.com")) {
+      if (u.pathname.startsWith("/shorts/")) return u.pathname.split("/")[2] || "";
+      const v = u.searchParams.get("v");
+      return v || "";
+    }
+  } catch (_) {}
+  return "";
+}
+
+/**
+ * @param {string} urlLike
+ * @param {boolean} [autoplay]
+ * @param {{ preferHighQuality?: boolean }} [options] Prefer HD when YouTube allows (embed URL hints only; player still adapts to device).
+ */
+function buildYouTubeEmbedUrl(urlLike, autoplay = false, options = {}) {
+  const vid = parseYouTubeVideoId(urlLike);
+  if (!vid) return "";
+  const preferHighQuality = options.preferHighQuality !== false;
+  const params = new URLSearchParams({
+    autoplay: autoplay ? "1" : "0",
+    mute: "1",
+    controls: "0",
+    rel: "0",
+    modestbranding: "1",
+    playsinline: "1",
+    loop: "1",
+    playlist: vid,
+    enablejsapi: "1",
+    iv_load_policy: "3",
+  });
+  if (preferHighQuality) {
+    params.set("hd", "1");
+    // Legacy hints; YouTube may ignore, but when honored they bias toward HD.
+    params.set("vq", "hd1080");
+  }
+  try {
+    if (typeof window !== "undefined" && window.location?.origin) {
+      params.set("origin", window.location.origin);
+    }
+  } catch (_) {}
+  return `https://www.youtube.com/embed/${encodeURIComponent(vid)}?${params.toString()}`;
+}
+
+/** Ask the embedded YouTube player for the highest available quality (best-effort; requires enablejsapi=1). */
+function requestYouTubeIframeHighestQuality(iframe) {
+  if (!iframe || iframe.tagName !== "IFRAME") return;
+  const src = String(iframe.getAttribute("src") || "");
+  if (!src.includes("youtube.com/embed")) return;
+  const send = () => {
+    try {
+      const win = iframe.contentWindow;
+      if (!win) return;
+      const payload = JSON.stringify({
+        event: "command",
+        func: "setPlaybackQuality",
+        args: ["highres"],
+      });
+      win.postMessage(payload, "https://www.youtube.com");
+    } catch (_) {}
+  };
+  const schedule = () => {
+    send();
+    setTimeout(send, 400);
+    setTimeout(send, 1400);
+  };
+  iframe.addEventListener("load", schedule, { once: true });
+  if (iframe.contentWindow) schedule();
+}
+
+/**
+ * @param {string} urlLike
+ * @param {{ preferMaxRes?: boolean }} [options] maxresdefault is sharper when available (not all videos have it).
+ */
+function buildYouTubeThumbnailUrl(urlLike, options = {}) {
+  const vid = parseYouTubeVideoId(urlLike);
+  if (!vid) return "";
+  const size = options.preferMaxRes ? "maxresdefault" : "hqdefault";
+  return `https://i.ytimg.com/vi/${encodeURIComponent(vid)}/${size}.jpg`;
+}
+
+function formatStoreCollectionSize(sizeMb) {
+  const n = Number(sizeMb || 0);
+  if (!Number.isFinite(n) || n <= 0) return "Size unknown";
+  if (n < 1) return `${Math.max(1, Math.round(n * 1000))} KB`;
+  return `${n.toFixed(1)} MB`;
+}
+
+function stopStoreHeroCycle() {
+  if (storeHeroCycleTimer) {
+    clearInterval(storeHeroCycleTimer);
+    storeHeroCycleTimer = null;
+  }
+  storeHeroCycleCount = 0;
+}
+
+function startStoreHeroCycle(heroCount) {
+  stopStoreHeroCycle();
+  if (!Number.isFinite(heroCount) || heroCount <= 1) return;
+  storeHeroCycleCount = heroCount;
+  storeHeroCycleTimer = setInterval(() => {
+    const next = (storeHeroActiveIndex + 1) % heroCount;
+    setStoreHeroIndex(next);
+  }, 6000);
+}
+
+function setStoreHeroIndex(nextIndex) {
+  const count = Math.max(0, Number(storeHeroCycleCount || 0));
+  if (count <= 0) return;
+  const normalized = ((Number(nextIndex) || 0) % count + count) % count;
+  storeHeroActiveIndex = normalized;
+  if (storeHeroRenderState) renderStoreHeroSection(storeHeroRenderState);
+}
+
+function normalizeStoreAdConfig(config) {
+  const src = config && typeof config === "object" ? config : {};
+  const mode = String(src?.ad_mode || "none").trim().toLowerCase();
+  const adTitle = String(src?.ad_title || "").trim();
+  const adDescription = String(src?.ad_description || "").trim();
+  const adButtonTitle = String(src?.ad_button_title || "").trim();
+  const adButtonUrl = String(src?.ad_button_url || "").trim();
+  const adImageUrl = String(src?.ad_image_url || "").trim();
+  const adVideoUrl = String(src?.ad_video_url || "").trim();
+  const adVideoThumb = buildYouTubeThumbnailUrl(adVideoUrl);
+  const adVideoEmbed = buildYouTubeEmbedUrl(adVideoUrl, true);
+  const adPreview = mode === "youtube" ? (adVideoThumb || adImageUrl) : adImageUrl;
+  const hasAdCta = adButtonUrl.length > 0;
+  const hasAdContent =
+    mode === "image"
+    || mode === "youtube"
+    || adTitle.length > 0
+    || adDescription.length > 0
+    || adPreview.length > 0
+    || adVideoEmbed.length > 0;
+
+  return {
+    adTitle,
+    adDescription,
+    adButtonTitle,
+    adButtonUrl,
+    adVideoEmbed,
+    adPreview,
+    hasAdCta,
+    hasAdContent,
+  };
+}
+
+function renderStoreHeroSection(renderState) {
+  const {
+    heroEl,
+    heroDotsEl,
+    heroCandidates,
+    installedById,
+    lang,
+    commercialAd,
+    applyBanner,
+  } = renderState || {};
+  if (!heroEl || !heroDotsEl || !Array.isArray(heroCandidates) || heroCandidates.length === 0) return;
+
+  if (storeHeroActiveIndex >= heroCandidates.length) storeHeroActiveIndex = 0;
+
+  const showDots = heroCandidates.length > 1 && heroCandidates.length <= 12;
+  heroDotsEl.innerHTML = "";
+  heroDotsEl.classList.toggle("hidden", !showDots);
+  if (showDots) {
+    for (let i = 0; i < heroCandidates.length; i++) {
+      const dot = document.createElement("button");
+      dot.type = "button";
+      dot.className = `store-hero-dots__dot${i === storeHeroActiveIndex ? " is-active" : ""}`;
+      dot.setAttribute("aria-label", `${t("store.title", lang)} ${i + 1}`);
+      dot.addEventListener("click", () => setStoreHeroIndex(i));
+      heroDotsEl.appendChild(dot);
+    }
+  }
+
+  const activeCollection = heroCandidates[storeHeroActiveIndex] || heroCandidates[0];
+  const heroId = String(activeCollection?.id || "");
+  const heroVideoUrl = String(activeCollection?.preview_video_url || "");
+  const heroVideoThumb = buildYouTubeThumbnailUrl(heroVideoUrl, { preferMaxRes: true });
+  const heroPreview = heroVideoThumb
+    || String(activeCollection?.banner_poster_url || "")
+    || (Array.isArray(activeCollection?.preview_urls) ? String(activeCollection.preview_urls[0] || "") : "");
+  const heroVideoEmbed = buildYouTubeEmbedUrl(heroVideoUrl, true, { preferHighQuality: true });
+  const heroState = storeDownloadStateById.get(heroId) || {};
+  const heroOwned = installedById.has(heroId) || heroState.status === "complete";
+  const heroDownloading = heroState.status === "downloading" || heroState.status === "importing";
+  const heroError = heroState.status === "error";
+  const heroActionLabel = heroOwned
+    ? t("store.inLibrary", lang)
+    : heroDownloading
+      ? `${t("store.downloading", lang)}${Number(heroState.pct || 0) > 0 ? ` ${Math.round(Number(heroState.pct || 0))}%` : ""}`
+      : heroError
+        ? t("store.retry", lang)
+        : t("store.download", lang);
+
+  const applyPosterUrlRaw = String(applyBanner?.poster_url || "").trim();
+  const applyPosterUpdatedAt = String(applyBanner?.updated_at || "").trim();
+  let applyPosterUrl = applyPosterUrlRaw;
+  if (applyPosterUrlRaw && applyPosterUpdatedAt) {
+    try {
+      const u = new URL(applyPosterUrlRaw);
+      u.searchParams.set("v", applyPosterUpdatedAt);
+      applyPosterUrl = u.toString();
+    } catch (_) {
+      const sep = applyPosterUrlRaw.includes("?") ? "&" : "?";
+      applyPosterUrl = `${applyPosterUrlRaw}${sep}v=${encodeURIComponent(applyPosterUpdatedAt)}`;
+    }
+  }
+  const applyVideoUrl = String(applyBanner?.preview_video_url || "").trim();
+  const applyVideoThumb = buildYouTubeThumbnailUrl(applyVideoUrl);
+  const applyVideoEmbed = buildYouTubeEmbedUrl(applyVideoUrl, true);
+  const applyPreview = applyVideoThumb || applyPosterUrl;
+  const applyHasMedia = applyPreview.length > 0 || applyVideoEmbed.length > 0;
+  const applyTitle = String(applyBanner?.title || "").trim() || t("store.applyTitle", lang);
+  const applyDescription = String(applyBanner?.description || "").trim() || t("store.applyDescription", lang);
+  const applyButtonTitle = String(applyBanner?.button_title || "").trim() || t("store.applyButton", lang);
+  const applyButtonUrl = String(applyBanner?.button_url || "").trim();
+
+  const staticKey = JSON.stringify({
+    adMode: commercialAd.hasAdContent,
+    adPreview: commercialAd.adPreview,
+    adVideoEmbed: commercialAd.adVideoEmbed,
+    adTitle: commercialAd.adTitle,
+    adDescription: commercialAd.adDescription,
+    adButtonTitle: commercialAd.adButtonTitle,
+    adButtonUrl: commercialAd.adButtonUrl,
+    applyPreview,
+    applyVideoEmbed,
+    applyTitle,
+    applyDescription,
+    applyButtonTitle,
+    applyButtonUrl,
+  });
+
+  const shouldRenderStatic = heroEl.dataset.heroStaticKey !== staticKey
+    || !heroEl.querySelector('[data-store-hero-slot="main"]');
+  if (shouldRenderStatic) {
+    heroEl.dataset.heroStaticKey = staticKey;
+    heroEl.innerHTML = `
+      <article class="store-hero-card store-hero-card--swap">
+        <div class="store-hero-shell">
+          <section class="store-hero-shell__main" data-store-hero-slot="main"></section>
+          <aside class="store-ad-card ${commercialAd.hasAdContent ? "" : "store-ad-card--empty"}">
+            <div class="store-ad-card__media ${commercialAd.adPreview ? "" : "store-ad-card__media--empty"} ${commercialAd.adVideoEmbed ? "store-ad-card__media--video" : ""}">
+              ${commercialAd.adPreview ? `<img src="${escapeHtml(commercialAd.adPreview)}" alt="" loading="lazy" />` : `<span>${escapeHtml(t("store.adSpace", lang))}</span>`}
+              ${commercialAd.adVideoEmbed ? `<iframe class="store-ad-card__video" src="${escapeHtml(commercialAd.adVideoEmbed)}" title="" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : ""}
+            </div>
+            <div class="store-ad-card__overlay">
+              ${commercialAd.adTitle ? `<h4 class="store-ad-card__title">${escapeHtml(commercialAd.adTitle)}</h4>` : ""}
+              ${commercialAd.adDescription ? `<p class="store-ad-card__desc">${escapeHtml(commercialAd.adDescription)}</p>` : ""}
+              ${commercialAd.hasAdCta ? `<button type="button" class="store-ad-card__action" data-store-ad-link="${escapeHtml(commercialAd.adButtonUrl)}">${escapeHtml(commercialAd.adButtonTitle || t("store.adCta", lang))}</button>` : ""}
+            </div>
+          </aside>
+          <aside class="store-apply-card ${applyHasMedia ? "" : "store-apply-card--empty"}">
+            <div class="store-apply-card__media ${applyPreview ? "" : "store-apply-card__media--empty"} ${applyVideoEmbed ? "store-ad-card__media--video" : ""}">
+              ${applyPreview ? `<img src="${escapeHtml(applyPreview)}" alt="" loading="lazy" />` : `<span>${escapeHtml(t("store.noPreview", lang))}</span>`}
+              ${applyVideoEmbed ? `<iframe class="store-ad-card__video" src="${escapeHtml(applyVideoEmbed)}" title="" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : ""}
+            </div>
+            <div class="store-apply-card__overlay">
+              <h4 class="store-apply-card__title">${escapeHtml(applyTitle)}</h4>
+              <p class="store-apply-card__desc">${escapeHtml(applyDescription)}</p>
+              ${applyButtonUrl ? `<button type="button" class="store-apply-card__action" data-store-apply-link="${escapeHtml(applyButtonUrl)}">${escapeHtml(applyButtonTitle)}</button>` : ""}
+            </div>
+          </aside>
+        </div>
+      </article>
+    `;
+    heroEl.querySelectorAll("[data-store-ad-link]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const url = String(btn.getAttribute("data-store-ad-link") || "").trim();
+        if (!url) return;
+        await openExternalLink(url, "store-ad-cta");
+      });
+    });
+    heroEl.querySelectorAll("[data-store-apply-link]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const url = String(btn.getAttribute("data-store-apply-link") || "").trim();
+        if (!url) return;
+        await openExternalLink(url, "store-apply-cta");
+      });
+    });
+    heroEl.querySelectorAll(".store-ad-card__video").forEach((el) => requestYouTubeIframeHighestQuality(el));
+  }
+
+  const mainSlot = heroEl.querySelector('[data-store-hero-slot="main"]');
+  if (!mainSlot) return;
+  mainSlot.innerHTML = `
+    <div class="store-hero-card__image ${heroPreview ? "" : "store-hero-card__image--empty"} ${heroVideoEmbed ? "store-hero-card__image--video" : ""}">
+      ${heroPreview ? `<img src="${escapeHtml(heroPreview)}" alt="" loading="lazy" />` : `<span>${escapeHtml(t("store.noPreview", lang))}</span>`}
+      ${heroVideoEmbed ? `<iframe class="store-hero-card__video" src="${escapeHtml(heroVideoEmbed)}" title="" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : ""}
+    </div>
+    <div class="store-hero-card__overlay">
+      <h3 class="store-hero-card__title">${escapeHtml(formatCollectionDisplayName(activeCollection?.name || "Untitled pack"))}</h3>
+      <p class="store-hero-card__meta">${Number(activeCollection?.item_count || 0)} ${escapeHtml(t("store.items", lang))} · ${escapeHtml(formatStoreCollectionSize(activeCollection?.file_size_mb))}</p>
+      <button type="button" class="store-hero-card__action ${heroOwned ? "store-card__action--owned" : ""}" data-store-hero-download-id="${escapeHtml(heroId)}" ${heroOwned || heroDownloading ? "disabled" : ""}>${escapeHtml(heroActionLabel)}</button>
+    </div>
+  `;
+  mainSlot.querySelectorAll(".store-hero-card__video").forEach((el) => requestYouTubeIframeHighestQuality(el));
+  mainSlot.querySelectorAll("[data-store-hero-download-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = String(btn.getAttribute("data-store-hero-download-id") || "");
+      const collection = heroCandidates.find((c) => String(c?.id || "") === id);
+      if (!collection) return;
+      const localState = storeDownloadStateById.get(id) || {};
+      const alreadyOwned = installedById.has(id) || localState.status === "complete";
+      const isDownloading = localState.status === "downloading" || localState.status === "importing";
+      downloadStoreCollection(collection, { alreadyOwned, isDownloading });
+    });
+  });
+}
+
+async function downloadStoreCollection(collection, { alreadyOwned, isDownloading } = {}) {
+  const id = String(collection?.id || "");
+  if (!id || alreadyOwned || isDownloading) return;
+  await refreshData();
+  const storeIndexAll = Array.isArray(storeCollectionsIndex) ? storeCollectionsIndex : [];
+  const installedById = reconcileInstalledStoreCollectionState(storeIndexAll);
+  const alreadyOwnedNow = installedById.has(id);
+  if (alreadyOwnedNow) {
+    storeDownloadStateById.set(id, { status: "complete", pct: 100 });
+    renderStorePage();
+    return;
+  }
+  const downloadUrl = String(collection?.download_url || "").trim();
+  if (!downloadUrl) {
+    toast("This collection is missing a download URL.", { variant: "error" });
+    return;
+  }
+  storeDownloadStateById.set(id, { status: "downloading", pct: 0 });
+  renderStorePage();
+  try {
+    const importResult = await window.qooti?.downloadAndImportCollection?.(id, downloadUrl);
+    await markStoreCollectionInstalledById(id, String(importResult?.collectionId || ""));
+    if (storeHideBannersForOnboarding) {
+      onboardingSessionInstalledStoreIds.add(id);
+    }
+    storeDownloadStateById.set(id, { status: "complete", pct: 100 });
+    await refreshAppAfterCollectionImport();
+    scheduleOcrAutoIndex();
+    renderStorePage();
+    notifyMediaAdd(`Added "${formatCollectionDisplayName(collection?.name || "Collection")}" to your library`, {
+      variant: "success",
+    });
+  } catch (err) {
+    storeDownloadStateById.set(id, { status: "error", pct: 0 });
+    renderStorePage();
+    notifyMediaAdd(err?.message || "Could not download this collection", { variant: "error" });
+  }
+}
+
+function renderStorePage() {
+  const heroEl = $("#storeHero");
+  const heroDotsEl = $("#storeHeroDots");
+  const featuredEl = $("#storeFeatured");
+  const gridEl = $("#storeGrid");
+  const emptyEl = $("#storeEmpty");
+  const countEl = $("#storeCount");
+  const query = ($("#storeSearch")?.value || "").trim().toLowerCase();
+  if (!gridEl || !heroEl || !heroDotsEl || !featuredEl) return;
+
+  const all = Array.isArray(storeCollectionsIndex) ? storeCollectionsIndex : [];
+  const filtered = query
+    ? all.filter((c) => formatCollectionDisplayName(c?.name || "").toLowerCase().includes(query))
+    : all;
+  const lang = state.settings?.language || "en";
+  const applyBanner = storeApplyBannerConfig && typeof storeApplyBannerConfig === "object"
+    ? storeApplyBannerConfig
+    : {};
+  const commercialBanner = storeCommercialBannerConfig && typeof storeCommercialBannerConfig === "object"
+    ? storeCommercialBannerConfig
+    : {};
+  const commercialAd = normalizeStoreAdConfig(commercialBanner);
+  const installedById = getInstalledStoreCollectionIds();
+  const hasStarterPackInstalled = hasOnboardingSessionStarterPackInstalled();
+  const showOnboardingRecommendations = storeHideBannersForOnboarding && onboardingRecommendedStoreIds.size > 0;
+  const onboardingCtaEl = $("#storeOnboardingCta");
+  const onboardingHintEl = $("#storeOnboardingHint");
+  const onboardingStartBtn = $("#storeOnboardingStartBtn");
+  const onboardingStartWrap = $("#storeOnboardingStartWrap");
+  if (onboardingCtaEl && onboardingStartBtn) {
+    if (storeHideBannersForOnboarding) {
+      onboardingCtaEl.classList.remove("hidden");
+      setStoreOnboardingOfflineGateVisible(false);
+      if (onboardingHintEl) {
+        onboardingHintEl.textContent = hasStarterPackInstalled
+          ? t("store.onboardingReady", lang)
+          : t("store.onboardingHint", lang);
+      }
+      onboardingStartBtn.disabled = !hasStarterPackInstalled;
+      onboardingStartBtn.classList.toggle("is-ready", hasStarterPackInstalled);
+      onboardingStartBtn.classList.toggle("is-disabled", !hasStarterPackInstalled);
+      onboardingStartWrap?.classList.toggle("enabled", hasStarterPackInstalled);
+      onboardingStartWrap?.classList.toggle("disabled", !hasStarterPackInstalled);
+      syncStoreOnboardingLanguageUi();
+    } else {
+      onboardingCtaEl.classList.add("hidden");
+      closeStoreOnboardingLanguageMenu();
+      onboardingStartBtn.disabled = true;
+      onboardingStartBtn.classList.remove("is-ready");
+      onboardingStartBtn.classList.add("is-disabled");
+      onboardingStartWrap?.classList.remove("enabled");
+      onboardingStartWrap?.classList.add("disabled");
+    }
+  }
+
+  if (countEl) {
+    const totalLabel = `${all.length} pack${all.length === 1 ? "" : "s"}`;
+    countEl.textContent = query ? `${totalLabel} · ${filtered.length} shown` : totalLabel;
+  }
+
+  gridEl.innerHTML = "";
+  heroEl.innerHTML = "";
+  const hideStoreBanners = storeHideBannersForOnboarding;
+  if (hideStoreBanners) {
+    featuredEl.classList.add("hidden");
+    heroEl.classList.add("hidden");
+    heroDotsEl.classList.add("hidden");
+    heroDotsEl.innerHTML = "";
+    stopStoreHeroCycle();
+    storeHeroRenderState = null;
+  }
+  if (filtered.length === 0) {
+    heroDotsEl.innerHTML = "";
+    featuredEl.classList.add("hidden");
+    heroEl.classList.add("hidden");
+    heroDotsEl.classList.add("hidden");
+    storeHeroRenderState = null;
+    stopStoreHeroCycle();
+    emptyEl?.classList.remove("hidden");
+    return;
+  }
+  if (!hideStoreBanners) {
+    featuredEl.classList.remove("hidden");
+    heroEl.classList.remove("hidden");
+  }
+  emptyEl?.classList.add("hidden");
+
+  if (!hideStoreBanners) {
+    const heroCandidates = filtered;
+    storeHeroRenderState = {
+      heroEl,
+      heroDotsEl,
+      heroCandidates,
+      installedById,
+      lang,
+      commercialAd,
+      applyBanner,
+    };
+    renderStoreHeroSection(storeHeroRenderState);
+    startStoreHeroCycle(heroCandidates.length);
+  }
+
+  // Featured and banner are independent; always show all collections here.
+  const featuredItems = filtered;
+  for (const collection of featuredItems) {
+    const id = String(collection?.id || "");
+    const previewVideoUrl = String(collection?.preview_video_url || "");
+    const previewVideoThumb = buildYouTubeThumbnailUrl(previewVideoUrl);
+    const firstPreview = previewVideoThumb
+      || String(collection?.card_poster_url || "")
+      || String(collection?.banner_poster_url || "")
+      || (Array.isArray(collection?.preview_urls) ? String(collection.preview_urls[0] || "") : "");
+    const previewVideoIdle = buildYouTubeEmbedUrl(previewVideoUrl, false);
+    const previewVideoHover = buildYouTubeEmbedUrl(previewVideoUrl, true);
+    const localState = storeDownloadStateById.get(id) || {};
+    const alreadyOwned = installedById.has(id) || localState.status === "complete";
+    const isDownloading = localState.status === "downloading" || localState.status === "importing";
+    const hasError = localState.status === "error";
+    const isRecommended = showOnboardingRecommendations && onboardingRecommendedStoreIds.has(id);
+
+    const card = document.createElement("article");
+    card.className = "store-card store-card--featured";
+    card.innerHTML = `
+      <div class="store-card__cover ${firstPreview ? "" : "store-card__cover--empty"}">
+        ${firstPreview ? `<img src="${escapeHtml(firstPreview)}" alt="" loading="lazy" />` : `<span>${escapeHtml(t("store.noPreview", lang))}</span>`}
+        ${previewVideoIdle ? `<iframe class="store-card__video" src="${escapeHtml(previewVideoIdle)}" title="" loading="lazy" allow="autoplay; encrypted-media; picture-in-picture" referrerpolicy="strict-origin-when-cross-origin"></iframe>` : ""}
+      </div>
+      <div class="store-card__body">
+        <div class="store-card__title-row">
+          <h3 class="store-card__title">${escapeHtml(formatCollectionDisplayName(collection?.name || "Untitled pack"))}</h3>
+          ${isRecommended ? `<span class="store-card__rec-chip">${escapeHtml(t("survey.recommended", lang))}</span>` : ""}
+        </div>
+        <p class="store-card__meta">${Number(collection?.item_count || 0)} ${escapeHtml(t("store.items", lang))} · ${escapeHtml(formatStoreCollectionSize(collection?.file_size_mb))}</p>
+        <button type="button" class="store-card__action ${alreadyOwned ? "store-card__action--owned" : ""}" ${alreadyOwned || isDownloading ? "disabled" : ""}></button>
+      </div>
+    `;
+    const actionBtn = card.querySelector(".store-card__action");
+    const cardVideoEl = card.querySelector(".store-card__video");
+    if (cardVideoEl && previewVideoHover) {
+      card.addEventListener("mouseenter", () => {
+        cardVideoEl.classList.add("is-active");
+        if (cardVideoEl.getAttribute("src") !== previewVideoHover) {
+          cardVideoEl.setAttribute("src", previewVideoHover);
+        }
+      });
+      card.addEventListener("mouseleave", () => {
+        cardVideoEl.classList.remove("is-active");
+        if (cardVideoEl.getAttribute("src") !== previewVideoIdle) {
+          cardVideoEl.setAttribute("src", previewVideoIdle);
+        }
+      });
+    }
+    if (actionBtn) {
+      if (alreadyOwned) {
+        actionBtn.textContent = t("store.inLibrary", lang);
+      } else if (isDownloading) {
+        const pct = Number(localState.pct || 0);
+        actionBtn.textContent = pct > 0 ? `${t("store.downloading", lang)} ${pct}%` : t("store.downloading", lang);
+      } else if (hasError) {
+        actionBtn.textContent = t("store.retry", lang);
+      } else {
+        actionBtn.textContent = t("store.download", lang);
+      }
+      actionBtn.addEventListener("click", async () => {
+        await downloadStoreCollection(collection, { alreadyOwned, isDownloading });
+      });
+    }
+    gridEl.appendChild(card);
+  }
+}
+
+async function showStoreView(options = {}) {
+  const fromOnboarding = options.fromOnboarding === true;
+  const skipConnectivityCheck = options.skipConnectivityCheck === true;
+  document.getElementById("app")?.classList.add("app--collections-open");
+  document.getElementById("app")?.classList.toggle("app--store-onboarding", fromOnboarding);
+  $("#gridView").classList.add("hidden");
+  $("#tagFilterBar")?.classList.add("hidden");
+  $("#settingsView")?.classList.add("hidden");
+  $("#historyView")?.classList.add("hidden");
+  $("#collectionsView")?.classList.add("hidden");
+  $("#storeView")?.classList.remove("hidden");
+  $("#btnBackFromStore")?.classList.toggle("hidden", fromOnboarding);
+  storeHideBannersForOnboarding = fromOnboarding;
+  if (fromOnboarding) {
+    onboardingSessionInstalledStoreIds = new Set();
+  } else {
+    closeStoreOnboardingLanguageMenu();
+    onboardingRecommendedStoreIds = new Set();
+  }
+  setStoreOnboardingOfflineGateVisible(false);
+
+  if (fromOnboarding && !skipConnectivityCheck) {
+    const canReachStore = await checkOnboardingStoreInternetConnection();
+    if (!canReachStore) {
+      setStoreOnboardingOfflineGateVisible(true);
+      return;
+    }
+  }
+
+  if (typeof storeProgressUnsub === "function") {
+    storeProgressUnsub();
+    storeProgressUnsub = null;
+  }
+  if (typeof window.qooti?.onCollectionProgress === "function") {
+    storeProgressUnsub = window.qooti.onCollectionProgress((payload) => {
+      const id = String(payload?.id || "");
+      if (!id) return;
+      const status = String(payload?.status || "downloading");
+      const pct = Math.max(0, Math.min(100, Number(payload?.pct || 0)));
+      const prev = storeDownloadStateById.get(id) || {};
+      storeDownloadStateById.set(id, { ...prev, status, pct });
+      renderStorePage();
+    });
+  }
+
+  const storeCountEl = $("#storeCount");
+  if (storeCountEl) storeCountEl.textContent = t("store.loading", state.settings?.language || "en");
+  try {
+    await refreshData();
+    const index = await window.qooti?.fetchFreeCollectionsIndex?.();
+    storeCollectionsIndex = Array.isArray(index?.free) ? index.free : [];
+    storeApplyBannerConfig = index?.store_apply_banner || null;
+    storeCommercialBannerConfig = index?.store_commercial_banner || null;
+  } catch (err) {
+    console.error("[store] load failed:", err?.message || err);
+    storeCollectionsIndex = [];
+    storeApplyBannerConfig = null;
+    storeCommercialBannerConfig = null;
+    notifyMediaAdd(t("store.loadFailed", state.settings?.language || "en"), { variant: "warning" });
+  }
+  renderStorePage();
+}
+
+function hideStoreView() {
+  if (!canExitOnboardingStore()) return false;
+  closeStoreOnboardingLanguageMenu();
+  $("#storeView")?.classList.add("hidden");
+  setStoreOnboardingOfflineGateVisible(false);
+  $("#storeOnboardingCta")?.classList.add("hidden");
+  $("#storeOnboardingStartBtn")?.setAttribute("disabled", "disabled");
+  $("#storeOnboardingStartBtn")?.classList.remove("is-ready");
+  $("#storeOnboardingStartBtn")?.classList.add("is-disabled");
+  $("#storeOnboardingStartWrap")?.classList.remove("enabled");
+  $("#storeOnboardingStartWrap")?.classList.add("disabled");
+  stopStoreHeroCycle();
+  storeHeroRenderState = null;
+  storeHideBannersForOnboarding = false;
+  document.getElementById("app")?.classList.remove("app--store-onboarding");
+  onboardingRecommendedStoreIds = new Set();
+  onboardingSessionInstalledStoreIds = new Set();
+  if (typeof storeProgressUnsub === "function") {
+    storeProgressUnsub();
+    storeProgressUnsub = null;
+  }
+  return true;
 }
 
 function normalizePackName(name) {
@@ -6208,6 +7097,9 @@ async function openImportCollectionPackFlow(packPathInput = null) {
       errEl.classList.add("hidden");
       try {
         const res = await window.qooti.importCollectionPack(packPath);
+        if (preview?.pack_id) {
+          await markStoreCollectionInstalledById(String(preview.pack_id), String(res?.collectionId || ""));
+        }
         const displayName = formatCollectionDisplayName(res.collectionName);
         notifyMediaAdd(`Imported ${res.imported} items into "${displayName}"`, { variant: "success" });
         if (res.errors?.length) toast(`${res.errors.length} item(s) skipped`, { variant: "warning" });
@@ -6555,6 +7447,7 @@ async function showCollectionsView() {
   $("#tagFilterBar")?.classList.add("hidden");
   $("#settingsView")?.classList.add("hidden");
   $("#historyView")?.classList.add("hidden");
+  if (!hideStoreView()) return;
   const collectionsView = $("#collectionsView");
   if (!collectionsView) return;
   collectionsView.classList.remove("hidden");
@@ -6900,6 +7793,7 @@ function refreshMediaPreviewItemFromState() {
 
 /** @param shuffle If true, randomize the current result set (Shuffle order menu only). Default false: keep API order (newest first). */
 async function loadInspirations(shuffle = false) {
+  const finishLoading = startGlobalLoadingTask();
   try {
     if (state.view.startsWith("collection:")) {
       const collectionId = state.view.split(":")[1];
@@ -6970,6 +7864,8 @@ async function loadInspirations(shuffle = false) {
     state.inspirations = [];
     state.inspirationsHasMore = false;
     renderGrid();
+  } finally {
+    finishLoading();
   }
 }
 
@@ -7029,9 +7925,14 @@ async function autofillShortFormRowIfNeeded() {
   let shortCount = state.inspirations.filter(showsInShortFormRow).length;
   if (shortCount >= targetVisibleShort) return;
 
-  let guard = 0;
-  while (state.inspirationsHasMore && !state.inspirationsLoadingMore && shortCount < targetVisibleShort && guard < 4) {
-    guard += 1;
+  let pagesLoaded = 0;
+  while (
+    state.inspirationsHasMore
+    && !state.inspirationsLoadingMore
+    && shortCount < targetVisibleShort
+    && pagesLoaded < SHORT_FORM_AUTOFILL_MAX_EXTRA_PAGES
+  ) {
+    pagesLoaded += 1;
     await loadMoreInspirations();
     shortCount = state.inspirations.filter(showsInShortFormRow).length;
   }
@@ -9122,6 +10023,8 @@ function showHistoryView() {
   $("#gridView").classList.add("hidden");
   $("#tagFilterBar")?.classList.add("hidden");
   $("#settingsView")?.classList.add("hidden");
+  $("#collectionsView")?.classList.add("hidden");
+  if (!hideStoreView()) return;
   const historyView = $("#historyView");
   if (historyView) {
     historyView.classList.remove("hidden");
@@ -9265,6 +10168,7 @@ function showTelegramMigrationAsFullPage() {
   $("#settingsView")?.classList.add("hidden");
   $("#historyView")?.classList.add("hidden");
   $("#collectionsView")?.classList.add("hidden");
+  if (!hideStoreView()) return;
   document.getElementById("app")?.classList.add("app--telegram-migration-open");
 
   const content = $("#telegramMigrationContent");
@@ -9919,6 +10823,7 @@ function showNotionImportAsFullPage() {
   $("#settingsView")?.classList.add("hidden");
   $("#historyView")?.classList.add("hidden");
   $("#collectionsView")?.classList.add("hidden");
+  if (!hideStoreView()) return;
   document.getElementById("app")?.classList.add("app--notion-import-open");
 
   const content = $("#notionImportContent");
@@ -10317,6 +11222,8 @@ function wireEvents() {
   // Keyboard sequence: Ctrl+B (Cmd+B on macOS), then C opens DevTools.
   let awaitingConsoleShortcut = false;
   let consoleShortcutTimer = null;
+  let awaitingUpdateShortcut = false;
+  let updateShortcutTimer = null;
   document.addEventListener("keydown", (e) => {
     const key = String(e.key || "").toLowerCase();
     if (key === "f12") {
@@ -10333,6 +11240,16 @@ function wireEvents() {
       }, 2500);
       return;
     }
+    // Hidden updater UI simulation shortcut: Alt+B, then U.
+    if (e.altKey && !chordMod(e) && !e.shiftKey && key === "b") {
+      awaitingUpdateShortcut = true;
+      if (updateShortcutTimer) clearTimeout(updateShortcutTimer);
+      updateShortcutTimer = setTimeout(() => {
+        awaitingUpdateShortcut = false;
+        updateShortcutTimer = null;
+      }, 2500);
+      return;
+    }
     if (awaitingConsoleShortcut && !chordMod(e) && !e.shiftKey && !e.altKey && key === "c") {
       awaitingConsoleShortcut = false;
       if (consoleShortcutTimer) clearTimeout(consoleShortcutTimer);
@@ -10343,10 +11260,24 @@ function wireEvents() {
       });
       return;
     }
+    if (awaitingUpdateShortcut && !e.shiftKey && !chordMod(e) && key === "u") {
+      awaitingUpdateShortcut = false;
+      if (updateShortcutTimer) clearTimeout(updateShortcutTimer);
+      updateShortcutTimer = null;
+      e.preventDefault();
+      simulateUpdateOnNextManualCheck = true;
+      toast("Update simulation armed. Click 'Check for updates'.", { durationMs: 2600, variant: "info" });
+      return;
+    }
     if (awaitingConsoleShortcut && key !== "control") {
       awaitingConsoleShortcut = false;
       if (consoleShortcutTimer) clearTimeout(consoleShortcutTimer);
       consoleShortcutTimer = null;
+    }
+    if (awaitingUpdateShortcut && key !== "alt") {
+      awaitingUpdateShortcut = false;
+      if (updateShortcutTimer) clearTimeout(updateShortcutTimer);
+      updateShortcutTimer = null;
     }
   });
 
@@ -10487,8 +11418,16 @@ function wireEvents() {
     await showFeedbackModal();
   });
   $("#surveyLangToggle")?.addEventListener("click", toggleSurveyProfileLanguage);
-  $("#profileSetupLangToggle")?.addEventListener("click", () => {
-    toggleSurveyProfileLanguage();
+  $("#storeOnboardingLangToggle")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    toggleStoreOnboardingLanguageMenu();
+  });
+  $("#storeOnboardingLangMenu")?.addEventListener("click", handleStoreOnboardingLanguageSelection);
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof Element && target.closest("#storeOnboardingLangWrap")) return;
+    closeStoreOnboardingLanguageMenu();
   });
   $("#feedbackFab")?.addEventListener("click", () => {
     const existing = document.querySelector(".app-modal--feedback");
@@ -10512,6 +11451,12 @@ function wireEvents() {
     hideCollectionsView();
     showGrid();
     loadInspirations();
+  });
+  $("#btnBackFromStore")?.addEventListener("click", () => {
+    state.view = "all";
+    if (!hideStoreView()) return;
+    showGrid();
+    renderGrid();
   });
   // Back from single-collection view (grid filtered by collection) -> return to Collections list
   const backToCollections = () => {
@@ -10548,6 +11493,28 @@ function wireEvents() {
     const view = $("#collectionsView");
     if (!view || view.classList.contains("hidden")) return;
     renderCollectionsPage(collectionsPageRows);
+  });
+  $("#storeSearch")?.addEventListener("input", () => {
+    const view = $("#storeView");
+    if (!view || view.classList.contains("hidden")) return;
+    renderStorePage();
+  });
+  $("#storeOnboardingStartBtn")?.addEventListener("click", async () => {
+    if (!hasOnboardingSessionStarterPackInstalled()) {
+      notifyMediaAdd(t("store.onboardingNeedPack", state.settings?.language || "en"), { variant: "warning" });
+      return;
+    }
+    await saveSetting(ONBOARDING_COMPLETED_KEY, "true");
+    if (!hideStoreView()) return;
+    showGrid();
+    renderGrid();
+    if (!hasShownOnboardingConfetti()) {
+      await saveSetting(CONFETTI_SHOWN_KEY, "true");
+      fireOnboardingConfetti();
+    }
+  });
+  $("#storeOnboardingRetryBtn")?.addEventListener("click", async () => {
+    await showStoreView({ fromOnboarding: true, skipConnectivityCheck: false });
   });
   $("#collectionsCreateBtn")?.addEventListener("click", async () => {
     const name = await showPrompt({ message: "Collection name", defaultValue: "Collection", submitLabel: "Create" });
@@ -11213,6 +12180,20 @@ function wireEvents() {
     showCollectionsView();
   });
 
+  $("#menuStore")?.addEventListener("click", () => {
+    hideAllDropdowns();
+    if (!hasInternetConnection()) {
+      updateStoreMenuAvailability();
+      notifyMediaAdd(t("store.offlineUnavailable", state.settings?.language || "en"), { variant: "warning" });
+      return;
+    }
+    showStoreView({ fromOnboarding: false });
+  });
+
+  updateStoreMenuAvailability();
+  window.addEventListener("online", handleNetworkAvailabilityChanged);
+  window.addEventListener("offline", handleNetworkAvailabilityChanged);
+
   $("#menuHistory").addEventListener("click", () => {
     hideAllDropdowns();
     showHistoryView();
@@ -11368,6 +12349,24 @@ function wireEvents() {
       updateSearchInputLinkState();
       state.query = "";
       await handleBltRangPaletteBackfillCommand();
+      return;
+    }
+    if (value === "blt_logout") {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#searchInput").value = "";
+      hideSearchDownloadBar();
+      updateSearchInputLinkState();
+      await handleBltLogoutSearchCommand();
+      return;
+    }
+    if (value === "blt_ended") {
+      e.preventDefault();
+      e.stopPropagation();
+      $("#searchInput").value = "";
+      hideSearchDownloadBar();
+      updateSearchInputLinkState();
+      await handleBltEndedSearchCommand();
       return;
     }
     // Normal search — apply query and reload
@@ -11529,6 +12528,14 @@ function wireEvents() {
       renderGrid();
       return;
     }
+    const storeView = $("#storeView");
+    if (storeView && !storeView.classList.contains("hidden")) {
+      e.preventDefault();
+      if (!hideStoreView()) return;
+      showGrid();
+      renderGrid();
+      return;
+    }
     const telegramMigrationView = $("#telegramMigrationView");
     if (telegramMigrationView && !telegramMigrationView.classList.contains("hidden")) {
       e.preventDefault();
@@ -11628,59 +12635,365 @@ async function ensureTagCountsAndRefreshBar() {
 
 async function bootMainContent() {
   const appEl = document.getElementById("app");
+  const bootStatusEl = $("#bootViewStatus");
+  const startedAt = performance.now();
   await loadSettingsFromBackend();
-  updateProfileUi();
-  // License validation is complete at this point; stop showing the boot screen
-  // before onboarding overlays (profile/survey) are presented.
-  appEl?.classList.remove("app--booting");
-  await ensureProfileSetup();
+  const lang = state.settings?.language || "en";
+  startupDiag("bootMainContent.settings_loaded");
+  setText(bootStatusEl, t("boot.preparingWorkspace", lang));
   updateProfileUi();
   await ensureSurveyComplete();
-  updateProfileUi();
+  startupDiag("bootMainContent.survey_checked");
+  let surveyCompleted = false;
+  try {
+    surveyCompleted = !!(await window.qooti?.getSurveyCompleted?.());
+  } catch (_) {
+    surveyCompleted = false;
+  }
+  const shouldOpenOnboardingStore = openStoreAfterSurvey || (surveyCompleted && !isOnboardingCompleted());
+  openStoreAfterSurvey = false;
+
   applyTheme();
   applyTranslations();
   applyUiScale();
   applyCardSizing();
   applyMediaTitleSizing();
   applyTagFilterVisibility();
-  await refreshData();
-  await loadInspirations();
-  await ensureTagCountsAndRefreshBar();
-  await refreshOcrIndexStats();
-  // Resume any real OCR backlog on startup, even if the queue had not started yet.
-  if (getOcrBacklogCount() > 0) {
-    scheduleOcrAutoIndex();
+
+  if (shouldOpenOnboardingStore) {
+    setText(bootStatusEl, t("boot.preparingOnboarding", lang));
+    await showStoreView({ fromOnboarding: true });
+    appEl?.classList.remove("app--booting");
+    startupDiag("bootMainContent.first_view_onboarding_store", {
+      duration_ms: Number(performance.now() - startedAt).toFixed(1),
+    });
+  } else {
+    setText(bootStatusEl, t("boot.loadingLibrary", lang));
+    await refreshData();
+    await loadInspirations();
+    appEl?.classList.remove("app--booting");
+    startupDiag("bootMainContent.first_view_grid", {
+      duration_ms: Number(performance.now() - startedAt).toFixed(1),
+    });
   }
-  // Load notifications after first media render to avoid empty-state flash.
-  initNotificationsSystem();
+
+  updateProfileUi();
   updateSelectionBar();
   updateCollectionViewBar();
   startExtensionPoll();
   setupExtensionPollOnFocus();
+  if (!startupDeferredTasksScheduled) {
+    startupDeferredTasksScheduled = true;
+    setTimeout(() => {
+      void runDeferredStartupTasks();
+    }, 0);
+  }
 }
 
-function setLicenseGateState({ subtitle, error, showRetry = false } = {}) {
+async function runDeferredStartupTasks() {
+  const startedAt = performance.now();
+  try {
+    await ensureTagCountsAndRefreshBar();
+    startupDiag("deferredStartup.tag_counts_ready");
+  } catch (err) {
+    console.warn("[qooti] deferred tag counts failed:", err?.message || err);
+  }
+  try {
+    await refreshOcrIndexStats();
+    startupDiag("deferredStartup.ocr_stats_ready");
+  } catch (err) {
+    console.warn("[qooti] deferred OCR stats failed:", err?.message || err);
+  }
+  try {
+    // Resume any real OCR backlog on startup after first usable view.
+    if (getOcrBacklogCount() > 0) {
+      scheduleOcrAutoIndex();
+      startupDiag("deferredStartup.ocr_backlog_resumed");
+    }
+  } catch (err) {
+    console.warn("[qooti] deferred OCR resume failed:", err?.message || err);
+  }
+  try {
+    // Load notifications after first usable view.
+    initNotificationsSystem();
+    startupDiag("deferredStartup.notifications_init");
+  } catch (err) {
+    console.warn("[qooti] deferred notifications init failed:", err?.message || err);
+  }
+  startupDiag("deferredStartup.complete", {
+    duration_ms: Number(performance.now() - startedAt).toFixed(1),
+  });
+}
+
+function setLicenseGateState({ subtitle, error, showReactivate = false, mode = "activate" } = {}) {
   const subtitleEl = $("#licenseViewSubtitle");
   const errEl = $("#licenseError");
-  const retryBtn = $("#licenseRetryBtn");
+  const reactivateBtn = $("#licenseReactivateBtn");
+  const getAccessBtn = $("#licenseGetAccessBtn");
+  const input = $("#licenseKeyInput");
+  const activateBtn = $("#licenseActivateBtn");
+  const isReactivateMode = mode === "reactivate";
   if (subtitleEl && subtitle != null) subtitleEl.textContent = subtitle;
   if (errEl) {
     errEl.textContent = error || "";
     errEl.classList.toggle("hidden", !error);
   }
-  retryBtn?.classList.toggle("hidden", !showRetry);
+  reactivateBtn?.classList.toggle("hidden", !showReactivate);
+  getAccessBtn?.classList.toggle("hidden", isReactivateMode);
+  input?.classList.toggle("hidden", isReactivateMode);
+  activateBtn?.classList.toggle("hidden", isReactivateMode);
+}
+
+const ACTIVATION_CONNECTIVITY_URL =
+  "https://raw.githubusercontent.com/blootapp/qooti-collections/main/index.json";
+
+function getCurrentUiLang() {
+  return String(state.settings?.language || "en").toLowerCase() === "uz" ? "uz" : "en";
+}
+
+function setLicenseActivationContentVisibility(visible) {
+  $("#licenseForm")?.classList.toggle("hidden", !visible);
+  $("#licenseView .license-view__footer")?.classList.toggle("hidden", !visible);
+  $("#licenseView .license-view__brand")?.classList.toggle("hidden", !visible);
+}
+
+function setLicenseConnectivityLoadingVisible(visible) {
+  $("#licenseConnectivityLoading")?.classList.toggle("hidden", !visible);
+}
+
+function setLicenseOfflineGateVisible(visible) {
+  $("#licenseOfflineGate")?.classList.toggle("hidden", !visible);
+}
+
+function syncLicenseOfflineGateCopy() {
+  const lang = getCurrentUiLang();
+  const secondaryLang = lang === "uz" ? "en" : "uz";
+  setText($("#licenseOfflineTitlePrimary"), t("offline.title", lang));
+  setText($("#licenseOfflineTitleSecondary"), t("offline.title", secondaryLang));
+  setText($("#licenseOfflineDescriptionPrimary"), t("offline.description", lang));
+  setText($("#licenseOfflineDescriptionSecondary"), t("offline.description", secondaryLang));
+  const retryBtn = $("#licenseOfflineRetryBtn");
+  if (retryBtn && !retryBtn.disabled) retryBtn.textContent = t("offline.retry", lang);
+}
+
+function showLicenseActivationConnectivityLoading() {
+  setLicenseActivationContentVisibility(false);
+  setLicenseOfflineGateVisible(false);
+  setLicenseConnectivityLoadingVisible(true);
+}
+
+function showLicenseActivationOfflineGate() {
+  setLicenseConnectivityLoadingVisible(false);
+  setLicenseActivationContentVisibility(false);
+  setLicenseOfflineGateVisible(true);
+  syncLicenseOfflineGateCopy();
+}
+
+function showLicenseActivationForm() {
+  setLicenseConnectivityLoadingVisible(false);
+  setLicenseOfflineGateVisible(false);
+  setLicenseActivationContentVisibility(true);
+  updateLicenseActivateButtonLockoutUi();
+}
+
+async function isActivationInternetConnected() {
+  const supportsSignalTimeout = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function";
+  let controller = null;
+  let timeoutId = null;
+  const signal = supportsSignalTimeout
+    ? AbortSignal.timeout(5000)
+    : (() => {
+        controller = new AbortController();
+        timeoutId = setTimeout(() => controller.abort(), 5000);
+        return controller.signal;
+      })();
+  try {
+    const response = await fetch(ACTIVATION_CONNECTIVITY_URL, {
+      method: "HEAD",
+      cache: "no-cache",
+      signal,
+    });
+    return !!response?.ok;
+  } catch (_) {
+    return false;
+  } finally {
+    if (timeoutId != null) clearTimeout(timeoutId);
+  }
+}
+
+async function initActivationConnectivityGate() {
+  showLicenseActivationConnectivityLoading();
+  const connected = await isActivationInternetConnected();
+  if (!connected) {
+    showLicenseActivationOfflineGate();
+    return false;
+  }
+  showLicenseActivationForm();
+  return true;
+}
+
+async function handleActivationOfflineRetry() {
+  const retryBtn = $("#licenseOfflineRetryBtn");
+  const lang = getCurrentUiLang();
+  if (retryBtn) {
+    retryBtn.disabled = true;
+    retryBtn.textContent = t("offline.checking", lang);
+    retryBtn.classList.remove("shake");
+  }
+  const connected = await isActivationInternetConnected();
+  if (connected) {
+    showLicenseActivationForm();
+    return;
+  }
+  if (retryBtn) {
+    retryBtn.disabled = false;
+    retryBtn.textContent = t("offline.retry", lang);
+    retryBtn.classList.add("shake");
+    setTimeout(() => retryBtn.classList.remove("shake"), 400);
+  }
+}
+
+async function ensureActivationConnectivityBeforeSubmit() {
+  const btn = $("#licenseActivateBtn");
+  const textEl = btn?.querySelector(".license-form__submit-text");
+  const lang = getCurrentUiLang();
+  if (btn && !isLicenseLockedNow()) {
+    btn.disabled = true;
+    if (textEl) textEl.textContent = t("activation.connecting", lang);
+  }
+  const connected = await isActivationInternetConnected();
+  if (!connected) {
+    showLicenseActivationOfflineGate();
+  } else {
+    showLicenseActivationForm();
+  }
+  if (!connected || isLicenseLockedNow()) {
+    updateLicenseActivateButtonLockoutUi();
+  }
+  return connected;
 }
 
 function resetLicenseGateState() {
-  const lang = state.settings?.language || "en";
+  const lang = getCurrentUiLang();
   setLicenseGateState({
     subtitle: t("license.enterKey", lang),
     error: "",
-    showRetry: false,
+    showReactivate: false,
+    mode: "activate",
   });
 }
 
 let licenseStartupCheckPromise = null;
+
+/** Escalating lockout for failed activation attempts (persisted locally). */
+const LICENSE_LOCKOUT_STORAGE_KEY = "qooti_license_lockout_v1";
+const LICENSE_LOCKOUT_STEPS_MS = [30_000, 60_000, 5 * 60_000, 24 * 60 * 60_000];
+let licenseFailedAttempts = 0;
+let licenseLockedUntil = 0;
+let licenseLockoutTimer = null;
+
+function loadLicenseLockoutState() {
+  try {
+    const raw = localStorage.getItem(LICENSE_LOCKOUT_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    licenseFailedAttempts = Math.max(0, Number(parsed?.failedAttempts) || 0);
+    licenseLockedUntil = Math.max(0, Number(parsed?.lockedUntil) || 0);
+  } catch (_) {
+    licenseFailedAttempts = 0;
+    licenseLockedUntil = 0;
+  }
+}
+
+function saveLicenseLockoutState() {
+  try {
+    localStorage.setItem(
+      LICENSE_LOCKOUT_STORAGE_KEY,
+      JSON.stringify({
+        failedAttempts: licenseFailedAttempts,
+        lockedUntil: licenseLockedUntil,
+      })
+    );
+  } catch (_) {}
+}
+
+function isLicenseLockedNow() {
+  return Date.now() < licenseLockedUntil;
+}
+
+function getLicenseLockRemainingMs() {
+  return Math.max(0, licenseLockedUntil - Date.now());
+}
+
+function formatLockoutDuration(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+  if (hours > 0) {
+    return `${String(hours).padStart(2, "0")}:${mm}:${ss}`;
+  }
+  return `${mm}:${ss}`;
+}
+
+function stopLicenseLockoutTicker() {
+  if (licenseLockoutTimer != null) {
+    clearInterval(licenseLockoutTimer);
+    licenseLockoutTimer = null;
+  }
+}
+
+function updateLicenseActivateButtonLockoutUi() {
+  const btn = $("#licenseActivateBtn");
+  const textEl = btn?.querySelector(".license-form__submit-text");
+  const lang = getCurrentUiLang();
+  if (!btn || !textEl) return;
+  if (isLicenseLockedNow()) {
+    const remaining = formatLockoutDuration(getLicenseLockRemainingMs());
+    btn.disabled = true;
+    textEl.textContent = `${t("license.lockedPrefix", lang)} ${remaining}`;
+    return;
+  }
+  btn.disabled = false;
+  textEl.textContent = t("activation.submit", lang);
+}
+
+function startLicenseLockoutTicker() {
+  stopLicenseLockoutTicker();
+  updateLicenseActivateButtonLockoutUi();
+  if (!isLicenseLockedNow()) return;
+  licenseLockoutTimer = setInterval(() => {
+    if (!isLicenseLockedNow()) {
+      stopLicenseLockoutTicker();
+      licenseLockedUntil = 0;
+      saveLicenseLockoutState();
+      updateLicenseActivateButtonLockoutUi();
+      return;
+    }
+    updateLicenseActivateButtonLockoutUi();
+  }, 1000);
+}
+
+function registerLicenseFailedAttempt() {
+  licenseFailedAttempts = Math.min(
+    licenseFailedAttempts + 1,
+    LICENSE_LOCKOUT_STEPS_MS.length
+  );
+  const idx = Math.max(0, licenseFailedAttempts - 1);
+  licenseLockedUntil = Date.now() + LICENSE_LOCKOUT_STEPS_MS[idx];
+  saveLicenseLockoutState();
+  startLicenseLockoutTicker();
+}
+
+function clearLicenseLockoutState() {
+  licenseFailedAttempts = 0;
+  licenseLockedUntil = 0;
+  saveLicenseLockoutState();
+  stopLicenseLockoutTicker();
+  updateLicenseActivateButtonLockoutUi();
+}
 
 async function startLicensedSession() {
   const appEl = document.getElementById("app");
@@ -11690,6 +13003,46 @@ async function startLicensedSession() {
   appEl?.classList.remove("app--booting");
 }
 
+/**
+ * Dev/preview shortcut: same license gate as expired trial/subscription (reactivate flow).
+ * Closes in-app surfaces and shows #licenseView in reactivate mode.
+ */
+async function handleBltEndedSearchCommand() {
+  const appEl = document.getElementById("app");
+  if (!appEl) return;
+  appEl.classList.remove(
+    "app--settings-open",
+    "app--collections-open",
+    "app--history-open",
+    "app--telegram-migration-open",
+    "app--notion-import-open"
+  );
+  $("#settingsView")?.classList.add("hidden");
+  $("#historyView")?.classList.add("hidden");
+  $("#collectionsView")?.classList.add("hidden");
+  $("#storeView")?.classList.add("hidden");
+  $("#gridView")?.classList.add("hidden");
+  $("#tagFilterBar")?.classList.add("hidden");
+  appEl.classList.remove("app--store-onboarding");
+  storeHideBannersForOnboarding = false;
+  if (typeof storeProgressUnsub === "function") {
+    storeProgressUnsub();
+    storeProgressUnsub = null;
+  }
+  appEl.classList.remove("app--survey");
+  $("#surveyView")?.classList.add("hidden");
+  appEl.classList.remove("app--booting");
+  appEl.classList.add("app--unlicensed");
+  const lang = state.settings?.language || "en";
+  await initActivationConnectivityGate();
+  setLicenseGateState({
+    subtitle: t("license.reactivatePrompt", lang),
+    error: "",
+    showReactivate: true,
+    mode: "reactivate",
+  });
+}
+
 async function checkStoredLicenseAccess({ showGateError = true } = {}) {
   if (licenseStartupCheckPromise) return licenseStartupCheckPromise;
   licenseStartupCheckPromise = (async () => {
@@ -11697,7 +13050,8 @@ async function checkStoredLicenseAccess({ showGateError = true } = {}) {
     const appEl = document.getElementById("app");
     const bootStatusEl = $("#bootViewStatus");
     setText(bootStatusEl, t("boot.checkingLicense", lang));
-    const LICENSE_STARTUP_TIMEOUT_MS = 10000;
+    // Backend license check now returns quickly on network issues; keep a modest UI guard.
+    const LICENSE_STARTUP_TIMEOUT_MS = 9000;
     const result = await Promise.race([
       window.qooti?.checkCurrentLicenseWithServer?.() ?? Promise.resolve(null),
       new Promise((_, reject) =>
@@ -11716,25 +13070,30 @@ async function checkStoredLicenseAccess({ showGateError = true } = {}) {
       usedCached: result?.used_cached,
       hasCachedKey: result?.has_cached_key,
     });
+    startupDiag("licenseCheck.result", {
+      valid: !!result?.valid,
+      status: result?.status || "",
+      used_cached: !!result?.used_cached,
+      has_cached_key: !!result?.has_cached_key,
+    });
     if (result?.valid) {
       resetLicenseGateState();
       await startLicensedSession();
-      if (result?.used_cached) {
-        setTimeout(() => {
-          toast(t("license.cachedOffline", lang), { durationMs: 3600, variant: "warning" });
-        }, 0);
-      }
       return true;
     }
     appEl?.classList.remove("app--booting");
     appEl?.classList.add("app--unlicensed");
+    const status = String(result?.status || "").toLowerCase();
+    const isExpired = status === "expired";
     if (showGateError) {
       setLicenseGateState({
-        subtitle: t("license.enterKey", lang),
-        error: getLicenseStatusMessage(result, lang),
-        showRetry: !!result?.has_cached_key || String(result?.status || "") === "network_error",
+        subtitle: isExpired ? t("license.reactivatePrompt", lang) : t("license.enterKey", lang),
+        error: isExpired ? "" : getLicenseStatusMessage(result, lang),
+        showReactivate: isExpired,
+        mode: isExpired ? "reactivate" : "activate",
       });
     }
+    initActivationConnectivityGate().catch(() => {});
     return false;
   })().finally(() => {
     licenseStartupCheckPromise = null;
@@ -11747,12 +13106,44 @@ function wireLicenseGate() {
   const input = $("#licenseKeyInput");
   const errEl = $("#licenseError");
   const btn = $("#licenseActivateBtn");
-  const retryBtn = $("#licenseRetryBtn");
+  const reactivateBtn = $("#licenseReactivateBtn");
+  const offlineRetryBtn = $("#licenseOfflineRetryBtn");
   if (!form || !input) return;
+  const handleAzeezbekBypass = () => {
+    clearLicenseLockoutState();
+    if (errEl) {
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+    }
+    input.value = "";
+    startLicenseLockoutTicker();
+  };
+  loadLicenseLockoutState();
+  startLicenseLockoutTicker();
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    const key = (input.value || "").trim().toLowerCase();
+    if (key !== "blt_azeezbek") return;
+    e.preventDefault();
+    e.stopPropagation();
+    handleAzeezbekBypass();
+  });
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    const lang = getCurrentUiLang();
     const key = input.value.trim();
-    setLicenseGateState({ subtitle: t("license.enterKey", state.settings?.language || "en"), error: "", showRetry: false });
+    if (key.toLowerCase() === "blt_azeezbek") {
+      handleAzeezbekBypass();
+      return;
+    }
+    const connected = await ensureActivationConnectivityBeforeSubmit();
+    if (!connected) return;
+    setLicenseGateState({
+      subtitle: t("license.enterKey", lang),
+      error: "",
+      showReactivate: false,
+      mode: "activate",
+    });
     if (!key) {
       if (errEl) {
         errEl.textContent = "Please enter a license key.";
@@ -11760,49 +13151,60 @@ function wireLicenseGate() {
       }
       return;
     }
+    if (isLicenseLockedNow()) {
+      if (errEl) {
+        errEl.textContent = `${t("license.lockedMessage", lang)} ${formatLockoutDuration(getLicenseLockRemainingMs())}`;
+        errEl.classList.remove("hidden");
+      }
+      startLicenseLockoutTicker();
+      return;
+    }
     if (btn) {
       uilog("license", "btn.disabled = true");
       btn.disabled = true;
+      const textEl = btn.querySelector(".license-form__submit-text");
+      if (textEl) textEl.textContent = t("activation.submit", lang);
     }
     try {
       const result = await window.qooti?.validateLicense?.(key);
       if (result && result.success) {
+        clearLicenseLockoutState();
         input.value = "";
         resetLicenseGateState();
+        if (btn) btn.disabled = false;
         await startLicensedSession();
       } else {
+        registerLicenseFailedAttempt();
         if (errEl) {
-          errEl.textContent = getLicenseStatusMessage(result, state.settings?.language || "en");
+          errEl.textContent = getLicenseStatusMessage(result, lang);
           errEl.classList.remove("hidden");
         }
       }
     } catch (err) {
+      registerLicenseFailedAttempt();
       if (errEl) {
         errEl.textContent = err?.message || "Activation failed.";
         errEl.classList.remove("hidden");
       }
     } finally {
-      if (btn) {
-        uilog("license", "btn.disabled = false");
+      if (btn && isLicenseLockedNow()) {
+        btn.disabled = true;
+      } else if (btn) {
         btn.disabled = false;
       }
+      startLicenseLockoutTicker();
     }
   });
-  retryBtn?.addEventListener("click", async () => {
-    retryBtn.disabled = true;
-    try {
-      const appEl = document.getElementById("app");
-      appEl?.classList.remove("app--unlicensed");
-      appEl?.classList.add("app--booting");
-      setLicenseGateState({
-        subtitle: t("license.enterKey", state.settings?.language || "en"),
-        error: "",
-        showRetry: false,
-      });
-      await checkStoredLicenseAccess({ showGateError: true });
-    } finally {
-      retryBtn.disabled = false;
-    }
+  reactivateBtn?.addEventListener("click", async () => {
+    await openExternalLink("https://bloot.app/", "license-reactivate");
+  });
+  offlineRetryBtn?.addEventListener("click", () => {
+    handleActivationOfflineRetry().catch(() => {});
+  });
+  const getAccessBtn = $("#licenseGetAccessBtn");
+  getAccessBtn?.addEventListener("click", async (e) => {
+    e.preventDefault();
+    await openExternalLink("https://bloot.app/register", "license-get-access");
   });
 }
 
@@ -11813,7 +13215,9 @@ function licenseLog(step, detail) {
 
 async function boot() {
   const appEl = document.getElementById("app");
+  const startedAt = performance.now();
   licenseLog("boot start");
+  startupDiag("boot.start");
   wireEvents();
   wireSettingsControls();
   setupGlobalDropZone();
@@ -11821,6 +13225,7 @@ async function boot() {
   try {
     licenseLog("waiting for Qooti API...");
     await waitForQootiApi();
+    startupDiag("boot.qooti_api_ready");
     await syncUpdaterStateFromBridge();
     resetLicenseGateState();
     const granted = await checkStoredLicenseAccess({ showGateError: true });
@@ -11829,6 +13234,9 @@ async function boot() {
       return;
     }
     licenseLog("startup license granted");
+    startupDiag("boot.license_granted", {
+      duration_ms: Number(performance.now() - startedAt).toFixed(1),
+    });
   } catch (e) {
     console.error("[qooti][license] boot failed:", e?.message || e);
     licenseLog("boot failed", e?.message || e);
@@ -11837,10 +13245,15 @@ async function boot() {
     setLicenseGateState({
       subtitle: t("license.enterKey", state.settings?.language || "en"),
       error: getLicenseStatusMessage({ status: "network_error", error: e?.message || String(e) }, state.settings?.language || "en"),
-      showRetry: true,
+      showReactivate: false,
+      mode: "activate",
     });
+    initActivationConnectivityGate().catch(() => {});
   }
   licenseLog("boot complete");
+  startupDiag("boot.complete", {
+    duration_ms: Number(performance.now() - startedAt).toFixed(1),
+  });
   if (window.qooti?.debug && (window.__TAURI__ || window.__TAURI_INTERNALS__)) {
     const mac = /Mac|Darwin|Macintosh/i.test(navigator.userAgent || "");
     console.log(

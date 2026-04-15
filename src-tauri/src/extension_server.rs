@@ -21,6 +21,7 @@ const PREF_LANGUAGE: &str = "language";
 const PORT: u16 = 1420;
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 const MAX_EXTENSION_URL_LENGTH: usize = 2048;
+const EXTENSION_ORIGIN_PREFIX: &str = "chrome-extension://";
 
 fn get_key_from_db(db_path: &Path) -> Option<String> {
     let conn = rusqlite::Connection::open(db_path).ok()?;
@@ -97,6 +98,10 @@ fn respond_404(message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
     respond_json(StatusCode(404), &serde_json::json!({ "error": message }))
 }
 
+fn respond_403(message: &str) -> Response<std::io::Cursor<Vec<u8>>> {
+    respond_json(StatusCode(403), &serde_json::json!({ "error": message }))
+}
+
 fn respond_413() -> Response<std::io::Cursor<Vec<u8>>> {
     respond_json(
         StatusCode(413),
@@ -118,6 +123,15 @@ fn normalize_extension_url(raw: &str) -> Result<String, String> {
         return Err("Only http/https URLs are supported".to_string());
     }
     Ok(parsed.to_string())
+}
+
+fn request_origin(request: &tiny_http::Request) -> Option<String> {
+    request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("Origin"))
+        .map(|h| h.value.as_str().trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn read_pref_string(conn: &rusqlite::Connection, key: &str) -> Option<String> {
@@ -353,6 +367,19 @@ pub fn spawn(db_path: std::path::PathBuf, vault_root: PathBuf, queue: Arc<Mutex<
                 .next()
                 .unwrap_or("")
                 .to_string();
+            if let Some(origin) = request_origin(&request) {
+                if !origin.starts_with(EXTENSION_ORIGIN_PREFIX) {
+                    warn!(
+                        "[server] rejected | method={} | path={} | reason=origin_not_allowed | origin={} | duration={}ms",
+                        method_str,
+                        path_only,
+                        origin,
+                        req_start.elapsed().as_millis()
+                    );
+                    let _ = request.respond(respond_403("Origin is not allowed"));
+                    continue;
+                }
+            }
             let client_key: String = request
                 .headers()
                 .iter()

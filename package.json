@@ -12,7 +12,9 @@
     "pack": "npm run gen:icons && npm run tauri:build",
     "dist": "npm run gen:icons && npm run tauri:build",
     "deploy": "wrangler deploy",
-    "preview": "wrangler dev"
+    "preview": "wrangler dev",
+    "release:github-upload-folder": "node scripts/prepare-github-release-folder.js",
+    "verify:resources": "node scripts/verify-build-resources.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",

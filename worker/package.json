@@ -1,0 +1,7 @@
+{
+  "name": "qooti-license-worker",
+  "private": true,
+  "dependencies": {
+    "bcryptjs": "^2.4.3"
+  }
+}

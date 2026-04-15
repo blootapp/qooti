@@ -16,3 +16,6 @@ src-tauri/resources/
 !.dev.vars.example
 .env*
 !.env.example
+
+# Local release staging (installers, latest.json for manual upload to qooti-releases)
+release-assets/

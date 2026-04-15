@@ -13,6 +13,7 @@ use tauri::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, WindowEvent};
 use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_autostart::ManagerExt as _;
 
 use crate::commands::{FeedbackQueueState, TagCountBackfillState, VideoDownloadSessionState};
 use crate::db::Db;
@@ -22,6 +23,7 @@ const TRAY_OPEN_ID: &str = "tray_open_qooti";
 const TRAY_NOTIFICATIONS_ID: &str = "tray_toggle_notifications_qooti";
 const TRAY_QUIT_ID: &str = "tray_quit_qooti";
 const PREF_TRAY_NOTIFICATIONS_ENABLED: &str = "trayNotificationsEnabled";
+const PREF_LAUNCH_AT_LOGIN: &str = "launchAtLogin";
 
 struct AppBackgroundState {
     allow_quit: AtomicBool,
@@ -65,6 +67,10 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
@@ -95,6 +101,26 @@ pub fn run() {
             let db = Arc::new(database);
             write_vault_readme(&vault.root);
             let _ = commands::migrate_vault_filenames_to_uuid(&db, &vault);
+            let launch_at_login_enabled = read_pref_bool(&db, PREF_LAUNCH_AT_LOGIN, true);
+            match if launch_at_login_enabled {
+                app.autolaunch().enable()
+            } else {
+                app.autolaunch().disable()
+            } {
+                Ok(_) => {
+                    log::info!(
+                        "[autostart] startup state synced | enabled={}",
+                        launch_at_login_enabled
+                    );
+                }
+                Err(err) => {
+                    log::warn!(
+                        "[autostart] failed to sync startup state | enabled={} | error={}",
+                        launch_at_login_enabled,
+                        err
+                    );
+                }
+            }
 
             let extension_queue = extension_server::ExtensionQueue(Arc::new(
                 std::sync::Mutex::new(std::collections::VecDeque::new()),
@@ -165,6 +191,9 @@ pub fn run() {
                     _ => {}
                 });
             if let Some(icon) = app.default_window_icon().cloned() {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.set_icon(icon.clone());
+                }
                 tray_builder = tray_builder.icon(icon);
             }
             tray_builder.build(app)?;
@@ -260,6 +289,7 @@ pub fn run() {
             commands::get_app_info,
             commands::get_preference,
             commands::set_preference,
+            commands::set_launch_at_login_enabled,
             commands::get_survey_completed,
             commands::set_survey_completed,
             commands::get_survey_data,

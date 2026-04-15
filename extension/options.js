@@ -8,6 +8,21 @@ const STORAGE_KEYS = {
 
 const DEFAULT_DESKTOP_URL = "http://127.0.0.1:1420";
 
+function normalizeDesktopUrl(raw) {
+  const fallback = DEFAULT_DESKTOP_URL;
+  const input = String(raw || fallback).trim() || fallback;
+  try {
+    const u = new URL(input);
+    const host = (u.hostname || "").toLowerCase();
+    const isLoopback = host === "127.0.0.1" || host === "localhost";
+    if (!isLoopback) return fallback;
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 const translations = {
   en: {
     title: "Qooti",
@@ -95,7 +110,7 @@ async function load() {
   ]);
   document.getElementById("displayMode").value = o[STORAGE_KEYS.DISPLAY_MODE] || "both";
   document.getElementById("popupPosition").value = o[STORAGE_KEYS.POPUP_POSITION] || "top-left";
-  document.getElementById("desktopUrl").value = o[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL;
+  document.getElementById("desktopUrl").value = normalizeDesktopUrl(o[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL);
   document.getElementById("connectionKey").value = o[STORAGE_KEYS.CONNECTION_KEY] || "";
   document.getElementById("language").value = o[STORAGE_KEYS.LANGUAGE] || "en";
   applyLanguage(o[STORAGE_KEYS.LANGUAGE] || "en");
@@ -104,7 +119,7 @@ async function load() {
 async function save() {
   const displayMode = document.getElementById("displayMode").value;
   const popupPosition = document.getElementById("popupPosition").value;
-  const desktopUrl = (document.getElementById("desktopUrl").value || DEFAULT_DESKTOP_URL).trim().replace(/\/+$/, "");
+  const desktopUrl = normalizeDesktopUrl(document.getElementById("desktopUrl").value || DEFAULT_DESKTOP_URL).replace(/\/+$/, "");
   const connectionKey = (document.getElementById("connectionKey").value || "").trim();
   await chrome.storage.local.set({
     [STORAGE_KEYS.DISPLAY_MODE]: displayMode,

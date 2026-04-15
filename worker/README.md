@@ -21,9 +21,13 @@ From the **worker** folder in your project:
 cd worker
 npx wrangler d1 execute qooti --remote --file=./migrations/0001_create_licenses.sql
 npx wrangler d1 execute qooti --remote --file=./migrations/0002_admin_redesign.sql
+npx wrangler d1 execute qooti --remote --file=./migrations/0003_notifications.sql
+npx wrangler d1 execute qooti --remote --file=./migrations/0004_bloot_users_trials.sql
+npx wrangler d1 execute qooti --remote --file=./migrations/0005_single_device_limit.sql
+npx wrangler d1 execute qooti --remote --file=./migrations/0006_bloot_public_id.sql
 ```
 
-Replace `qooti` with your database name if different. Migration 0002 adds `revoked_at`, `license_devices`, and `admin_logs`.
+Replace `qooti` with your database name if different. Migration 0002 adds `revoked_at`, `license_devices`, and `admin_logs`. **0004** adds Bloot `users`, `trial_device_claims`, and extends `licenses` with `email`, `app_id`, and `trial` plan type (rebuilds `licenses`; backs up `license_devices`). **0005** enforces a single-device policy (`device_limit = 1`) for Qooti licenses. **0006** adds user-facing `public_id` (format `BLT-xxxx-xxxx-xxxx`) and migrates trial license keys to use public IDs.
 
 ## 3. Set the admin secret
 
@@ -31,15 +35,17 @@ Pick a long random string (e.g. `openssl rand -hex 32`) and set it as a secret:
 
 ```bash
 npx wrangler secret put ADMIN_SECRET
+npx wrangler secret put INTERNAL_SECRET
 ```
 
-Paste your secret when prompted. This is the value you’ll enter in the **Admin secret** field of the admin page.
+- **ADMIN_SECRET** — value for the license **admin** page (`X-Admin-Secret`).
+- **INTERNAL_SECRET** — long random string shared with the **Bloot website** only (`X-Internal-Secret` on `POST /bloot/internal/register`). Set the same value in the site’s `BLOOT_INTERNAL_SECRET` env var.
 
 ## 4. Log in and deploy
 
 ```bash
 npx wrangler login
-npx wrangler deploy
+npx wrangler deploy --config ./wrangler.toml
 ```
 
 When deploy finishes, Wrangler prints the Worker URL, e.g.:
@@ -64,7 +70,11 @@ That URL is your **Worker base URL**. Use it in:
 |-------|--------|-----|-------------|
 | `/license/validate` | POST | Qooti app | Validate key + device, register device if under limit |
 | `/license/status` | GET | Qooti app | Background re-check (query: `license_key`, `device_fingerprint`) |
+| `/bloot/internal/register` | POST | Website (server) | Create Bloot user + 7-day Qooti trial (`X-Internal-Secret`, body: email, passwordHash, name, surname, username) |
+| `/bloot/login` | POST | Website (server) | Login (body: `identifier` = username/email, `password`); returns `blootUserId` (`public_id`) |
+| `/bloot/internal/reset-password` | POST | Website (server) | Reset password by email (`X-Internal-Secret`, body: email, passwordHash) |
 | `/admin/licenses` | GET | Admin | Paginated list, search (query: `page`, `limit`, `search`, `status`, `plan_type`) |
+| `/admin/users` | GET | Admin | Bloot website accounts from D1 (query: `page`, `limit`, `id` exact internal id or `public_id`, `email` substring) |
 | `/admin/licenses` | POST | Admin | Create license (body: `planType`, `durationYears`, `deviceLimit`) – backend generates key |
 | `/admin/licenses/:key` | GET | Admin | Full license details + devices |
 | `/admin/licenses/:key` | PATCH | Admin | Edit plan, expiry, device limit |

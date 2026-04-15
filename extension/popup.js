@@ -10,6 +10,21 @@ const STORAGE_KEYS = {
 const LAST_ERROR_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const DEFAULT_DESKTOP_URL = "http://127.0.0.1:1420";
 
+function normalizeDesktopUrl(raw) {
+  const fallback = DEFAULT_DESKTOP_URL;
+  const input = String(raw || fallback).trim() || fallback;
+  try {
+    const u = new URL(input);
+    const host = (u.hostname || "").toLowerCase();
+    const isLoopback = host === "127.0.0.1" || host === "localhost";
+    if (!isLoopback) return fallback;
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 const translations = {
   en: {
     popupTitle: "Qooti",
@@ -141,7 +156,9 @@ function formatTime(ts) {
 }
 
 async function checkConnection() {
-  const base = (await chrome.storage.local.get(STORAGE_KEYS.DESKTOP_URL))[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL;
+  const base = normalizeDesktopUrl(
+    (await chrome.storage.local.get(STORAGE_KEYS.DESKTOP_URL))[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL
+  );
   const key = (await chrome.storage.local.get(STORAGE_KEYS.CONNECTION_KEY))[STORAGE_KEYS.CONNECTION_KEY];
   if (!key || !key.trim()) {
     statusDot.className = "status-dot disconnected";
@@ -202,7 +219,9 @@ saveKeyBtn.addEventListener("click", async () => {
     setupError.classList.remove("hidden");
     return;
   }
-  const base = (await chrome.storage.local.get(STORAGE_KEYS.DESKTOP_URL))[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL;
+  const base = normalizeDesktopUrl(
+    (await chrome.storage.local.get(STORAGE_KEYS.DESKTOP_URL))[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL
+  );
   try {
     const url = `${base.replace(/\/+$/, "")}/qooti/handshake`;
     const res = await fetch(url, {

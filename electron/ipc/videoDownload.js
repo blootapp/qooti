@@ -44,7 +44,6 @@ async function downloadVideoFromUrl(url, destPath, onProgress) {
   const flags = {
     output: outputTemplate,
     format: "best[ext=mp4]/best",
-    noCheckCertificates: true,
     noWarnings: true,
     noCallHome: true,
     noPlaylist: true,

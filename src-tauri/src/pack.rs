@@ -77,6 +77,10 @@ pub struct PackItemMetadata {
     pub source_url: Option<String>,
     pub original_filename: Option<String>,
     pub aspect_ratio: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ocr_status: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -428,9 +432,11 @@ where
             Option<String>,
             Option<String>,
             Option<f64>,
+            String,
+            Option<String>,
         )> = conn
             .query_row(
-                "SELECT type, title, source_url, original_filename, stored_path, thumbnail_path, aspect_ratio FROM inspirations WHERE id = ?",
+                "SELECT type, title, source_url, original_filename, stored_path, thumbnail_path, aspect_ratio, COALESCE(ocr_text, ''), ocr_status FROM inspirations WHERE id = ?",
                 [&insp_id],
                 |r: &rusqlite::Row| {
                     Ok((
@@ -441,6 +447,8 @@ where
                         r.get::<_, Option<String>>(4)?,
                         r.get::<_, Option<String>>(5)?,
                         r.get::<_, Option<f64>>(6)?,
+                        r.get::<_, String>(7)?,
+                        r.get::<_, Option<String>>(8)?,
                     ))
                 },
             )
@@ -455,6 +463,8 @@ where
             stored_path,
             thumbnail_path,
             aspect_ratio,
+            ocr_text_raw,
+            ocr_status_raw,
         )) = row
         else {
             skipped += 1;
@@ -503,6 +513,23 @@ where
             .flatten()
             .and_then(|s| serde_json::from_str(&s).ok());
 
+        let ocr_text = {
+            let t = ocr_text_raw.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        };
+        let ocr_status = ocr_status_raw.and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
+
         let pack_item = PackItem {
             original_id: insp_id.clone(),
             r#type: itype,
@@ -515,6 +542,8 @@ where
                 source_url,
                 original_filename,
                 aspect_ratio,
+                ocr_text,
+                ocr_status,
             },
         };
         pack_items.push((pack_item, bytes));
@@ -757,6 +786,25 @@ pub fn import_pack(
                 "INSERT OR IGNORE INTO collection_items (collection_id, inspiration_id, position, created_at) VALUES (?, ?, ?, ?)",
                 rusqlite::params![collection_id, &new_id, pos as i32, ts],
             );
+            let packed_text = item.metadata.ocr_text.as_deref().unwrap_or("").trim();
+            let packed_status = item
+                .metadata
+                .ocr_status
+                .as_deref()
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty());
+            if !packed_text.is_empty() {
+                let st = packed_status.unwrap_or("done");
+                let _ = conn.execute(
+                    "UPDATE inspirations SET ocr_text = ?, ocr_status = ? WHERE id = ? AND TRIM(COALESCE(ocr_text, '')) = ''",
+                    rusqlite::params![packed_text, st, &new_id],
+                );
+            } else if let Some(st) = packed_status {
+                let _ = conn.execute(
+                    "UPDATE inspirations SET ocr_text = '', ocr_status = ? WHERE id = ? AND TRIM(COALESCE(ocr_text, '')) = ''",
+                    rusqlite::params![st, &new_id],
+                );
+            }
             imported += 1;
             continue;
         }
@@ -800,10 +848,26 @@ pub fn import_pack(
             .as_ref()
             .and_then(|p| serde_json::to_string(p).ok());
 
+        let ocr_text_val = item
+            .metadata
+            .ocr_text
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        let ocr_status_val: Option<String> = item.metadata.ocr_status.as_ref().and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        });
+
         if conn
             .execute(
-                r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, palette)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)"#,
+                r#"INSERT INTO inspirations (id, type, title, source_url, original_filename, stored_path, thumbnail_path, display_row, aspect_ratio, created_at, updated_at, palette, ocr_text, ocr_status)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?)"#,
                 rusqlite::params![
                     new_id,
                     item.r#type,
@@ -819,6 +883,8 @@ pub fn import_pack(
                     ts,
                     ts,
                     palette_json,
+                    ocr_text_val,
+                    ocr_status_val,
                 ],
             )
             .is_err()
@@ -847,4 +913,44 @@ pub fn import_pack(
     )
     .map_err(|e| e.to_string())?;
     Ok((collection_id, name, imported, errors))
+}
+
+#[cfg(test)]
+mod pack_unit_tests {
+    use super::{hex_sha256, PackItemMetadata};
+
+    #[test]
+    fn pack_item_metadata_serde_round_trip_with_ocr() {
+        let m = PackItemMetadata {
+            title: Some("t".into()),
+            source_url: Some("https://example.com".into()),
+            original_filename: Some("a.png".into()),
+            aspect_ratio: Some(1.5),
+            ocr_text: Some("hello world".into()),
+            ocr_status: Some("done".into()),
+        };
+        let json = serde_json::to_string(&m).expect("serialize");
+        let back: PackItemMetadata = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.ocr_text, m.ocr_text);
+        assert_eq!(back.ocr_status, m.ocr_status);
+        assert_eq!(back.title, m.title);
+    }
+
+    #[test]
+    fn pack_item_metadata_legacy_json_without_ocr_defaults() {
+        let j = r#"{"title":"only_title"}"#;
+        let m: PackItemMetadata = serde_json::from_str(j).expect("deserialize legacy");
+        assert!(m.ocr_text.is_none());
+        assert!(m.ocr_status.is_none());
+        assert_eq!(m.title.as_deref(), Some("only_title"));
+    }
+
+    #[test]
+    fn hex_sha256_known_vector() {
+        let h = hex_sha256(b"");
+        assert_eq!(
+            h,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
 }

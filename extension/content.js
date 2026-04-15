@@ -1136,38 +1136,6 @@
     if (!thumbUrl && currentMediaEl && currentMediaEl.tagName === "VIDEO") {
       thumbUrl = currentMediaEl.poster || "";
     }
-    function sendDirectToDesktop(rawPayload) {
-      chrome.storage.local.get(["desktopUrl", "connectionKey"], function (o) {
-        var key = ((o && o.connectionKey) || "").trim();
-        var base = (((o && o.desktopUrl) || "http://127.0.0.1:1420") + "").replace(/\/+$/, "");
-        if (!key) {
-          console.error("[Qooti] Direct send failed: missing connection key");
-          return;
-        }
-        fetch(base + "/qooti/add", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Qooti-Key": key,
-          },
-          body: JSON.stringify({
-            action: rawPayload.action,
-            url: rawPayload.url,
-            pageUrl: rawPayload.pageUrl,
-            pageTitle: rawPayload.pageTitle,
-            mediaType: rawPayload.mediaType,
-            platform: rawPayload.platform,
-          }),
-        })
-          .then(function (res) {
-            if (!res.ok) return res.text().then(function (t) { throw new Error(t || ("HTTP " + res.status)); });
-            console.log("[Qooti] Request queued in desktop (direct)");
-          })
-          .catch(function (e) {
-            console.error("[Qooti] Direct desktop error:", e && e.message ? e.message : e);
-          });
-      });
-    }
     console.log("[Qooti] Sending to desktop:", payload.action, payload.url, platform);
     function trySend(retriesLeft) {
       chrome.runtime.sendMessage(payload, function (response) {
@@ -1179,8 +1147,7 @@
             return;
           }
           if (isNoReceiver) {
-            console.warn("[Qooti] Background not ready. Falling back to direct desktop request.");
-            sendDirectToDesktop(payload);
+            console.warn("[Qooti] Background not ready; request dropped securely.");
           } else {
             console.error("[Qooti] Extension error:", err);
           }

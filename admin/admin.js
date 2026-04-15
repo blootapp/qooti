@@ -41,7 +41,12 @@ function adminFetch(path, options = {}) {
   if (!secret) return Promise.reject(new Error("Set Admin secret in Settings."));
   const url = baseUrl + path;
   const headers = { "Content-Type": "application/json", "X-Admin-Secret": secret, ...options.headers };
-  return fetch(url, { ...options, headers });
+  return fetch(url, { ...options, headers }).then((res) => {
+    if (res.status === 401) {
+      throw new Error("Unauthorized. Open Settings and set the correct Admin secret for qooti-license.");
+    }
+    return res;
+  });
 }
 
 function formatTimestamp(ts) {
@@ -60,6 +65,7 @@ function formatExpires(ts) {
 // --- Tab switching ---
 const panels = {
   licenses: "panelLicenses",
+  users: "panelUsers",
   create: "panelCreate",
   notifications: "panelNotifications",
   details: "panelDetails",
@@ -87,6 +93,7 @@ function switchTab(tab) {
   if (panel) panel.classList.add("is-active");
   if (tab === "details" && detailsLicenseKey) loadDetails(detailsLicenseKey);
   if (tab === "notifications") loadNotificationsSent();
+  if (tab === "users") loadUsers();
 }
 
 function showDetails(key) {
@@ -106,12 +113,14 @@ const licensesLimit = 20;
 
 function loadLicenses() {
   const licenseKey = document.getElementById("licensesLicenseKey")?.value?.trim() || "";
+  const email = document.getElementById("licensesEmail")?.value?.trim().toLowerCase() || "";
   const status = document.getElementById("licensesStatus")?.value || "";
   const plan = document.getElementById("licensesPlan")?.value || "";
   const expirationWindow = document.getElementById("licensesExpirationWindow")?.value || "";
   const deviceLimitState = document.getElementById("licensesDeviceLimitState")?.value || "";
   const params = new URLSearchParams({ page: licensesPage, limit: licensesLimit });
   if (licenseKey) params.set("license_key", licenseKey);
+  if (email) params.set("email", email);
   if (status) params.set("status", status);
   if (plan) params.set("plan_type", plan);
   if (expirationWindow) params.set("expiration_window", expirationWindow);
@@ -138,16 +147,17 @@ function renderLicensesTable(data) {
     const msg = tooMany
       ? "Too many results. Refine filters."
       : "No licenses found. Use Create License to add one, or adjust filters.";
-    tbody.innerHTML = `<tr><td colspan="6" class="table-empty">${escapeHtml(msg)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="table-empty">${escapeHtml(msg)}</td></tr>`;
   } else {
     tbody.innerHTML = licenses.map((l) => {
       const statusClass = l.status === "valid" ? "badge--ok" : l.status === "expired" ? "badge--warn" : "badge--err";
       const keyDisplay = l.license_key_masked ?? l.license_key ?? "—";
       return `<tr>
         <td><code>${escapeHtml(keyDisplay)}</code></td>
+        <td>${escapeHtml(l.email || "—")}</td>
         <td>${escapeHtml(l.plan_type)}</td>
         <td>${formatExpires(l.expires_at)}</td>
-        <td>${l.device_count ?? 0} / ${l.device_limit ?? 3}</td>
+        <td>${l.device_count ?? 0} / ${l.device_limit ?? 1}</td>
         <td><span class="badge ${statusClass}">${escapeHtml(l.status)}</span></td>
         <td>
           <button type="button" class="btn btn--small btn--secondary" data-action="view" data-key="${escapeAttr(l.license_key)}">View</button>
@@ -190,6 +200,163 @@ document.getElementById("licensesFilterForm")?.addEventListener("submit", (e) =>
 document.getElementById("licensesPrev")?.addEventListener("click", () => { licensesPage--; loadLicenses(); });
 document.getElementById("licensesNext")?.addEventListener("click", () => { licensesPage++; loadLicenses(); });
 
+// --- Registered users (Bloot / D1) ---
+let usersPage = 1;
+const usersLimit = 30;
+
+function loadUsers() {
+  const idQ = document.getElementById("usersUserId")?.value?.trim() || "";
+  const emailQ = document.getElementById("usersEmail")?.value?.trim() || "";
+  const params = new URLSearchParams({ page: usersPage, limit: usersLimit });
+  if (idQ) params.set("id", idQ);
+  if (emailQ) params.set("email", emailQ);
+
+  setStatus("usersStatusMsg", "Loading…", "muted");
+  adminFetch("/admin/users?" + params)
+    .then(async (r) => {
+      let data = {};
+      try {
+        data = await r.json();
+      } catch (_) {
+        /* empty/non-json body */
+      }
+      if (!r.ok) {
+        if (r.status === 404) {
+          throw new Error("Worker is outdated. Deploy latest worker from worker/wrangler.toml.");
+        }
+        throw new Error(data.error || `Request failed (${r.status})`);
+      }
+      return data;
+    })
+    .then((data) => {
+      renderUsersTable(data);
+      setStatus("usersStatusMsg", "", "muted");
+    })
+    .catch((e) => setStatus("usersStatusMsg", e.message || "Failed", "err"));
+}
+
+function renderUsersTable(data) {
+  const tbody = document.getElementById("usersTableBody");
+  if (!tbody) return;
+  const users = data.users || [];
+
+  if (users.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="7" class="table-empty">No users match. Try clearing filters or check D1 migration.</td></tr>';
+  } else {
+    tbody.innerHTML = users
+      .map((u) => {
+        const when =
+          u.created_at != null ? formatTimestamp(Number(u.created_at)) : "—";
+        const fullName = [u.name, u.surname].filter(Boolean).join(" ").trim() || "—";
+        const userKey = escapeAttr(u.public_id || u.id || "");
+        const licenseKey = escapeAttr(u.license_key || "");
+        const status = String(u.license_status || "none");
+        const statusClass =
+          status === "valid" ? "badge--ok" : status === "expired" ? "badge--warn" : status === "revoked" ? "badge--err" : "";
+        const licenseBadge = status === "none" ? "—" : `<span class="badge ${statusClass}">${escapeHtml(status)}</span>`;
+        return `<tr>
+        <td>${escapeHtml(when)}</td>
+        <td>${escapeHtml(u.email || "—")}</td>
+        <td>${escapeHtml(fullName)}</td>
+        <td>${escapeHtml(u.username || "—")}</td>
+          <td><code class="admin__mono">${escapeHtml(u.public_id || u.id || "—")}</code></td>
+        <td>${licenseBadge}</td>
+        <td class="users-actions">
+          ${status !== "none" ? `<button type="button" class="btn btn--small btn--secondary" data-user-action="view" data-license-key="${licenseKey}" data-user-key="${userKey}">View</button>` : ""}
+          ${status !== "none" && status !== "revoked" ? `<button type="button" class="btn btn--small btn--secondary" data-user-action="ext1" data-license-key="${licenseKey}" data-user-key="${userKey}">+1m</button>` : ""}
+          ${status !== "none" && status !== "revoked" ? `<button type="button" class="btn btn--small btn--secondary" data-user-action="ext6" data-license-key="${licenseKey}" data-user-key="${userKey}">+6m</button>` : ""}
+          ${status !== "none" && status !== "revoked" ? `<button type="button" class="btn btn--small btn--secondary" data-user-action="ext12" data-license-key="${licenseKey}" data-user-key="${userKey}">+12m</button>` : ""}
+          ${status !== "none" && status !== "revoked" ? `<button type="button" class="btn btn--small btn--danger" data-user-action="revoke" data-license-key="${licenseKey}" data-user-key="${userKey}">Revoke</button>` : ""}
+          ${status === "revoked" ? `<button type="button" class="btn btn--small btn--danger" data-user-action="delete-license" data-license-key="${licenseKey}" data-user-key="${userKey}">Delete license</button>` : ""}
+          ${status === "revoked" || status === "none" ? `<button type="button" class="btn btn--small btn--danger" data-user-action="delete-account" data-user-key="${userKey}">Delete account</button>` : ""}
+        </td>
+      </tr>`;
+      })
+      .join("");
+  }
+
+  tbody.querySelectorAll("[data-user-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const action = btn.getAttribute("data-user-action");
+      const licenseKey = btn.getAttribute("data-license-key") || "";
+      const userKey = btn.getAttribute("data-user-key") || "";
+      if (!licenseKey && action !== "delete-account") return;
+      if (action === "view") return showDetails(licenseKey);
+      if (action === "ext1") return extendLicenseByMonths(licenseKey, 1, { statusId: "usersStatusMsg", refreshUsers: true });
+      if (action === "ext6") return extendLicenseByMonths(licenseKey, 6, { statusId: "usersStatusMsg", refreshUsers: true });
+      if (action === "ext12") return extendLicenseByMonths(licenseKey, 12, { statusId: "usersStatusMsg", refreshUsers: true });
+      if (action === "revoke") {
+        if (!confirm("Revoke this user's Qooti license?")) return;
+        return revokeLicense(licenseKey, { statusId: "usersStatusMsg", refreshUsers: true });
+      }
+      if (action === "delete-license") {
+        if (!confirm("Delete this revoked license permanently?")) return;
+        return deleteLicenseFromUsers(licenseKey);
+      }
+      if (action === "delete-account") {
+        if (!confirm("Delete this account permanently? This cannot be undone.")) return;
+        if (!userKey) return;
+        return deleteUserAccountFromUsers(userKey);
+      }
+    });
+  });
+
+  const total = data.total ?? 0;
+  const page = data.page ?? 1;
+  const limit = data.limit ?? usersLimit;
+  const info = document.getElementById("usersPaginationInfo");
+  if (info) info.textContent = total > 0 ? `${total} total · Page ${page}` : "";
+  const prev = document.getElementById("usersPrev");
+  const next = document.getElementById("usersNext");
+  if (prev) prev.disabled = page <= 1;
+  if (next) next.disabled = page * limit >= total;
+}
+
+document.getElementById("usersFilterForm")?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  usersPage = 1;
+  loadUsers();
+});
+document.getElementById("usersPrev")?.addEventListener("click", () => {
+  usersPage--;
+  loadUsers();
+});
+document.getElementById("usersNext")?.addEventListener("click", () => {
+  usersPage++;
+  loadUsers();
+});
+
+function deleteLicenseFromUsers(key) {
+  adminFetch("/admin/licenses/" + encodeURIComponent(key), { method: "DELETE" })
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      return data;
+    })
+    .then(() => {
+      loadUsers();
+      loadLicenses();
+      setStatus("usersStatusMsg", "Revoked license deleted.", "ok");
+    })
+    .catch((e) => setStatus("usersStatusMsg", e.message || "Failed", "err"));
+}
+
+function deleteUserAccountFromUsers(userId) {
+  adminFetch("/admin/users/" + encodeURIComponent(userId), { method: "DELETE" })
+    .then(async (res) => {
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed");
+      return data;
+    })
+    .then((data) => {
+      loadUsers();
+      loadLicenses();
+      setStatus("usersStatusMsg", `Account deleted (licenses removed: ${data.deleted_licenses ?? 0}).`, "ok");
+    })
+    .catch((e) => setStatus("usersStatusMsg", e.message || "Failed", "err"));
+}
+
 function resetDevicesFromList(key) {
   if (!confirm("Reset all devices for this license? Users will need to re-activate.")) return;
   adminFetch("/admin/licenses/" + encodeURIComponent(key) + "/devices/reset", { method: "POST" })
@@ -216,7 +383,7 @@ document.getElementById("formCreate")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const planType = document.getElementById("createPlanType")?.value || "lifetime";
   const durationYears = parseInt(document.getElementById("createDurationYears")?.value || "1", 10);
-  const deviceLimit = parseInt(document.getElementById("createDeviceLimit")?.value || "3", 10);
+  const deviceLimit = 1;
   const btn = document.getElementById("btnCreate");
   btn.disabled = true;
   setStatus("createStatus", "Generating…", "muted");
@@ -408,9 +575,11 @@ function renderDetails(data) {
   document.getElementById("detailsKey").textContent = data.license_key;
   document.getElementById("detailsStatus").textContent = data.status;
   document.getElementById("detailsStatus").className = "badge " + statusClass;
+  const em = document.getElementById("detailsEmail");
+  if (em) em.textContent = data.email || "—";
   document.getElementById("detailsPlan").textContent = data.plan_type || "—";
   document.getElementById("detailsExpires").textContent = formatExpires(data.expires_at);
-  document.getElementById("detailsDevices").textContent = `${(data.devices || []).length} / ${data.device_limit ?? 3}`;
+  document.getElementById("detailsDevices").textContent = `${(data.devices || []).length} / ${data.device_limit ?? 1}`;
 
   const tbody = document.getElementById("detailsDevicesBody");
   tbody.innerHTML = (data.devices || []).map((d) => `
@@ -489,7 +658,9 @@ function deleteLicense(key) {
     });
 }
 
-function revokeLicense(key) {
+function revokeLicense(key, opts = {}) {
+  const statusId = opts.statusId || "detailsStatusMsg";
+  const refreshUsers = !!opts.refreshUsers;
   adminFetch("/admin/licenses/" + encodeURIComponent(key) + "/revoke", { method: "POST" })
     .then(async (res) => {
       const data = await res.json();
@@ -499,9 +670,10 @@ function revokeLicense(key) {
     .then((data) => {
       if (detailsLicenseKey === key) loadDetails(key);
       loadLicenses();
-      setStatus("detailsStatusMsg", "License revoked.", "ok");
+      if (refreshUsers) loadUsers();
+      setStatus(statusId, "License revoked.", "ok");
     })
-    .catch((e) => setStatus("detailsStatusMsg", e.message || "Failed", "err"));
+    .catch((e) => setStatus(statusId, e.message || "Failed", "err"));
 }
 
 function revokeDevice(licenseKey, fp) {
@@ -530,8 +702,10 @@ function openEditModal(key) {
     .then((data) => {
       if (data.error) throw new Error(data.error);
       document.getElementById("editLicenseKey").value = key;
-      document.getElementById("editPlanType").value = data.plan_type || "lifetime";
-      document.getElementById("editDeviceLimit").value = data.device_limit ?? 3;
+      const pt = data.plan_type || "lifetime";
+      document.getElementById("editPlanType").value =
+        pt === "trial" || pt === "yearly" || pt === "lifetime" ? pt : "lifetime";
+      document.getElementById("editDeviceLimit").value = 1;
       const years = data.plan_type === "yearly" && data.issued_at && data.expires_at
         ? Math.round((data.expires_at - data.issued_at) / 31536000)
         : 1;
@@ -543,8 +717,8 @@ function openEditModal(key) {
 }
 
 document.getElementById("editPlanType")?.addEventListener("change", () => {
-  document.getElementById("editDurationRow").style.display =
-    document.getElementById("editPlanType").value === "yearly" ? "" : "none";
+  const v = document.getElementById("editPlanType").value;
+  document.getElementById("editDurationRow").style.display = v === "yearly" ? "" : "none";
 });
 
 document.getElementById("editCancel")?.addEventListener("click", () => {
@@ -555,12 +729,55 @@ document.getElementById("editModal")?.querySelector(".modal__backdrop")?.addEven
   document.getElementById("editModal").classList.add("hidden");
 });
 
+async function extendLicenseByMonths(key, months, opts = {}) {
+  const statusId = opts.statusId || "detailsStatusMsg";
+  const refreshUsers = !!opts.refreshUsers;
+  if (!key) return;
+  if (!confirm(`Extend this license by ${months} month(s)? (30 days each)`)) return;
+  setStatus(statusId, "Extending…", "muted");
+  try {
+    const detailRes = await adminFetch("/admin/licenses/" + encodeURIComponent(key));
+    const data = await detailRes.json();
+    if (data.error) throw new Error(data.error);
+    const now = Math.floor(Date.now() / 1000);
+    const cur = Number(data.expires_at) || 0;
+    const base = Math.max(now, cur);
+    const add = months * 30 * 86400;
+    const newExp = base + add;
+    let planType = data.plan_type || "yearly";
+    if (planType === "trial") planType = "yearly";
+    const patchRes = await adminFetch("/admin/licenses/" + encodeURIComponent(key), {
+      method: "PATCH",
+      body: JSON.stringify({ planType, expiresAt: newExp, deviceLimit: 1 }),
+    });
+    const out = await patchRes.json();
+    if (!patchRes.ok) throw new Error(out.error || "Failed");
+    document.getElementById("editModal")?.classList.add("hidden");
+    loadDetails(key);
+    loadLicenses();
+    if (refreshUsers) loadUsers();
+    setStatus(statusId, "License extended.", "ok");
+  } catch (err) {
+    setStatus(statusId, err.message || "Failed", "err");
+  }
+}
+
+document.getElementById("extend1m")?.addEventListener("click", () => {
+  if (detailsLicenseKey) extendLicenseByMonths(detailsLicenseKey, 1);
+});
+document.getElementById("extend6m")?.addEventListener("click", () => {
+  if (detailsLicenseKey) extendLicenseByMonths(detailsLicenseKey, 6);
+});
+document.getElementById("extend12m")?.addEventListener("click", () => {
+  if (detailsLicenseKey) extendLicenseByMonths(detailsLicenseKey, 12);
+});
+
 document.getElementById("formEdit")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const key = document.getElementById("editLicenseKey").value;
   const planType = document.getElementById("editPlanType").value;
   const durationYears = parseInt(document.getElementById("editDurationYears").value || "1", 10);
-  const deviceLimit = parseInt(document.getElementById("editDeviceLimit").value || "3", 10);
+  const deviceLimit = 1;
   try {
     const res = await adminFetch("/admin/licenses/" + encodeURIComponent(key), {
       method: "PATCH",
@@ -622,6 +839,20 @@ document.getElementById("btnSaveConfig")?.addEventListener("click", () => {
   const secret = document.getElementById("configSecret")?.value?.trim() || "";
   saveConfig(baseUrl, secret);
   setStatus("configStatus", "Config saved.", "ok");
+});
+
+document.getElementById("btnCopySecret")?.addEventListener("click", async () => {
+  const secret = document.getElementById("configSecret")?.value?.trim() || "";
+  if (!secret) {
+    setStatus("configStatus", "No admin secret to copy.", "err");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(secret);
+    setStatus("configStatus", "Admin secret copied.", "ok");
+  } catch (_) {
+    setStatus("configStatus", "Clipboard access failed. Copy manually from the field.", "err");
+  }
 });
 
 document.getElementById("btnResetConfig")?.addEventListener("click", () => {

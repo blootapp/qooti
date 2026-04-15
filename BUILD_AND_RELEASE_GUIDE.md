@@ -18,22 +18,89 @@ It is written to prevent the exact release problems we already hit, especially:
 
 This guide assumes:
 
-- the app is built on Windows
-- releases are uploaded to `blootapp/qooti-releases`
-- updater endpoint stays:
+- **Source + CI:** [`blootapp/qooti`](https://github.com/blootapp/qooti) — code is pushed here (e.g. `main`); **Build macOS** runs on this repo and produces the `macos-build` artifact.
+- **Distribution:** [`blootapp/qooti-releases`](https://github.com/blootapp/qooti-releases/releases) — after a successful local Windows build + mac CI artifact download, the operator **manually** creates a new release tag (`v<version>`) and uploads **all** files from `release-assets/v<version>/`. Nothing in this flow relies on `qooti-releases` CI to publish binaries.
+- Windows installer is built **locally** (signed NSIS).
+- macOS bundles are built in **GitHub Actions** on `blootapp/qooti`.
+- Updater endpoint in app config stays:
   - `https://github.com/blootapp/qooti-releases/releases/latest/download/latest.json`
+
+## When the user says “build the app” (do this every time)
+
+Treat this as a **full release prep** unless the user explicitly names an exception (for example: Windows-only hotfix, skip push, or dry run).
+
+**Do not ask clarifying questions** about the default flow. Execute it. Only stop and ask if something is **actually missing** (for example: private key file not at the expected path, `gh` not authenticated, or GitHub Actions cannot start jobs due to org billing).
+
+### Required sequence
+
+1. **Bump the version** everywhere it must match (see [section 2](#2-files-that-must-be-version-bumped)). After bumping Rust, run a build or `cargo update` as needed so `src-tauri/Cargo.lock` stays consistent with `src-tauri/Cargo.toml`.
+2. **Commit and push** the version bump and any release changes to **`blootapp/qooti` `main`** (or the branch the macOS workflow uses). The machine’s `git HEAD` should match what CI will build before you rely on the automated folder step.
+3. **Signing**
+   - **Windows (local NSIS + updater `.sig`):** set `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` when building. On the usual dev PC the key file is at `C:\Users\Windows 11\.tauri\qooti.key`. If that path does not exist, **ask** for the correct path. **Never commit passwords or key material to this repository**; use environment variables or another secret channel the operator uses for the agent session.
+   - **macOS (CI):** the `Build macOS` workflow on `blootapp/qooti` uses repository secrets: `APPLE_CERTIFICATE`, `APPLE_CERTIFICATE_PASSWORD`, `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Use the **same Tauri keypair** as on Windows so updater signatures match. For this project, **`APPLE_CERTIFICATE_PASSWORD` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` are set to the same password value** (Apple `.p12` unlock password and Tauri key password).
+   - **Windows key path (confirmed):** `C:\Users\Windows 11\.tauri\qooti.key` — use this path unless the machine layout changes.
+4. **Build Windows** with signing (see [section 3](#3-build-the-installer)). Confirm both `Qooti_<version>_x64-setup.exe` and `Qooti_<version>_x64-setup.exe.sig` exist under `src-tauri/target/release/bundle/nsis/`.
+5. **`latest.json` for Windows + macOS:** do **not** stop at a Windows-only manifest. After the Windows build exists, run the automated step that pulls the macOS GitHub Actions artifact and merges platforms:
+
+   ```bash
+   npm run release:github-upload-folder
+   ```
+
+   This runs `scripts/prepare-github-release-folder.js`: dispatches or follows **`Build macOS`**, waits for success, downloads the **`macos-build`** artifact, runs `generate-latest-json.js` with **`--macos-bundle-dir`**, and copies **everything to upload** into **`release-assets/v<version>/`** (Windows `.exe` + `.sig`, macOS `.app.tar.gz` + `.sig`, DMGs from the artifact, and merged **`latest.json`**).
+
+   If Actions cannot run (billing, disabled workflows), say so clearly; you cannot fabricate mac assets locally without a Mac build.
+
+6. **Publish (manual):** upload **every** file from `release-assets/v<version>/` to **[`blootapp/qooti-releases` releases](https://github.com/blootapp/qooti-releases/releases)** — create a **new tag** `v<version>`, attach the assets, and set **Latest** when appropriate. Pushing to `blootapp/qooti` only triggers CI; it does **not** replace this upload step.
+
+### Quick reference: signing env (Windows local build)
+
+```cmd
+cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%TAURI_SIGNING_PRIVATE_KEY_PASSWORD%&& npm run tauri build -- --bundles nsis"
+```
+
+Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the shell **before** running the line above, or substitute a secure value for the placeholder—**do not** paste passwords into committed docs or source files.
+
+## What we did for v0.1.0 (working path)
+
+This is the exact path that worked after debugging CI failures:
+
+1. Bumped app version in all required files:
+   - `package.json`
+   - `package-lock.json`
+   - `src-tauri/tauri.conf.json`
+   - `src-tauri/Cargo.toml`
+2. Built Windows installer locally with updater signing key:
+   - produced `.exe` and `.sig`
+3. Updated release workflows to support macOS-specific config and reliable CI:
+   - `--config src-tauri/tauri.macos.conf.json` for mac builds
+   - valid rust targets for universal mac build:
+     - `x86_64-apple-darwin,aarch64-apple-darwin`
+   - release workflow permissions:
+     - `permissions: contents: write`
+   - `strategy.fail-fast: false` to avoid canceling Windows when macOS fails
+4. Restored Apple certificate signing in CI with explicit validation:
+   - required repo secrets:
+     - `APPLE_CERTIFICATE`
+     - `APPLE_CERTIFICATE_PASSWORD`
+     - `TAURI_SIGNING_PRIVATE_KEY`
+     - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+5. Triggered release by pushing tag `v0.1.0`.
+6. Verified release assets include both:
+   - Windows installer: `Qooti_0.1.0_x64-setup.exe`
+   - macOS installer: `Qooti_0.1.0_universal.dmg`
 
 ## Release checklist
 
-Do these in order:
+Do these in order (same as [“build the app”](#when-the-user-says-build-the-app-do-this-every-time) unless the user narrows scope):
 
 1. Finish code changes.
-2. Bump the version in all required files.
-3. Build the signed NSIS installer.
-4. Regenerate `latest.json` for the new version.
-5. Verify the contents of `latest.json`.
-6. Upload the correct assets to the matching GitHub release tag.
-7. Test update detection from the previous installed version.
+2. Bump the version in all required files (and keep `src-tauri/Cargo.lock` aligned).
+3. Commit and push to `blootapp/qooti` `main`.
+4. Build the **signed** NSIS installer locally (Windows).
+5. Run **`npm run release:github-upload-folder`** so `latest.json` includes **Windows and macOS** and all upload files land in **`release-assets/v<version>/`**.
+6. Verify the contents of `latest.json` (version, URLs, signatures).
+7. **Manually** upload everything in `release-assets/v<version>/` to **[`blootapp/qooti-releases`](https://github.com/blootapp/qooti-releases/releases)** — new release, new tag **`v<version>`**, all assets attached.
+8. Test update detection from the previous installed version.
 
 If one step is skipped, the updater can silently fail.
 
@@ -97,12 +164,10 @@ Qooti uses Tauri + NSIS on Windows.
 Build command:
 
 ```cmd
-cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=YOUR_PASSWORD&& npm run tauri build -- --bundles nsis"
+cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%TAURI_SIGNING_PRIVATE_KEY_PASSWORD%&& npm run tauri build -- --bundles nsis"
 ```
 
-Replace:
-
-- `YOUR_PASSWORD` with the actual signing key password
+Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the environment first (do not commit it).
 
 Notes:
 
@@ -135,15 +200,23 @@ If you do not regenerate it, GitHub may still serve an old manifest that points 
 
 even though the new installer is already uploaded.
 
-Run:
+### Preferred: Windows + macOS (merged manifest)
+
+After the signed Windows NSIS build exists, run:
+
+```bash
+npm run release:github-upload-folder
+```
+
+That script ends by running `generate-latest-json.js` with **`--macos-bundle-dir`** so **`latest.json` lists `windows-x86_64` and all required `darwin-*` entries**. The merged file is written next to the NSIS outputs and copied into **`release-assets/v<version>/`**.
+
+### Manual: Windows only (avoid for full releases)
 
 ```powershell
 node scripts/generate-latest-json.js https://github.com/blootapp/qooti-releases/releases/download/v0.1.2
 ```
 
-Replace:
-
-- `v0.1.2` with the tag of the release you are publishing
+Replace `v0.1.2` with the tag you are publishing. Use this only when you intentionally skip macOS for that release.
 
 Important:
 
@@ -202,21 +275,82 @@ If installed app version is already `0.1.1`, Tauri sees no newer version and log
 [qooti][updater] check_no_update
 ```
 
-## 6. GitHub release rules
+## 6. Copy all release files to one folder (after build)
 
-Releases are published in:
+When the build (and any manifest step) is finished, copy **every** file you need for distribution, backup, or upload into a **single staging folder** under the repo. That way nothing is scattered across `target/` paths.
 
-- `https://github.com/blootapp/qooti-releases/releases`
+**Canonical location:** `release-assets/v<version>/`  
+Example: `release-assets/v0.1.0/`
 
-For each new version:
+**Default way to populate it:** run **`npm run release:github-upload-folder`** (see [section 4](#4-generate-latestjson-after-every-build)). Do not hand-copy unless you have a deliberate reason.
 
-1. Create a new release tag:
-   - `v0.1.2`
-2. Upload these assets:
-   - `qooti_0.1.2_x64-setup.exe`
-   - `qooti_0.1.2_x64-setup.exe.sig`
-   - `latest.json`
-3. Publish the release
+### What ends up in `release-assets/v<version>/` (full release)
+
+| Artifact | Typical source |
+|----------|----------------|
+| Windows installer | `src-tauri/target/release/bundle/nsis/Qooti_<version>_x64-setup.exe` |
+| Windows updater signature | Same folder: `Qooti_<version>_x64-setup.exe.sig` |
+| macOS updater bundle + sig | From downloaded **`macos-build`** artifact (`*.app.tar.gz` + `.sig`) |
+| macOS DMG (optional upload) | From same artifact under `.../bundle/dmg/` |
+| Merged `latest.json` | From `prepare-github-release-folder.js` / `generate-latest-json.js` |
+
+Adjust filenames if your build uses different casing; always match what `tauri build` actually produced.
+
+### Fallback: after a local Windows build only (no macOS in manifest)
+
+Run once a Windows-only `latest.json` exists next to the NSIS outputs:
+
+```powershell
+$v = "0.1.2"
+$dest = "release-assets/v$v"
+New-Item -ItemType Directory -Force -Path $dest | Out-Null
+Copy-Item "src-tauri\target\release\bundle\nsis\Qooti_${v}_x64-setup.exe" $dest
+Copy-Item "src-tauri\target\release\bundle\nsis\Qooti_${v}_x64-setup.exe.sig" $dest
+Copy-Item "src-tauri\target\release\bundle\nsis\latest.json" $dest
+```
+
+### After a full GitHub Actions release (Windows + macOS)
+
+Download the full release into one folder (no need to hunt paths on runners):
+
+```powershell
+New-Item -ItemType Directory -Force -Path "release-assets/v0.1.0" | Out-Null
+gh release download v0.1.0 --repo blootapp/qooti --dir "release-assets/v0.1.0"
+```
+
+That pulls `latest.json`, `.exe`, `.dmg`, `.tar.gz`, and `.sig` files together.
+
+**Do not** commit large binaries to git unless you intend to version them; keep `release-assets/` as a local staging area.
+
+## 7. GitHub: two repos
+
+### `blootapp/qooti` (code + macOS CI)
+
+- Push version bumps and code here so **`Build macOS`** can run and produce **`macos-build`**.
+
+**Secrets** on `blootapp/qooti` (mac signing + updater `.sig`):
+
+- `APPLE_CERTIFICATE` (single-line base64 of `.p12`)
+- `APPLE_CERTIFICATE_PASSWORD`
+- `TAURI_SIGNING_PRIVATE_KEY`
+- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`
+
+For this project, **`APPLE_CERTIFICATE_PASSWORD` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` use the same password value.**
+
+If `APPLE_CERTIFICATE` or either password secret is missing/empty, macOS signing fails before upload.
+
+**`release.yml` on `qooti` (if present):** any workflow that builds/releases from this repo needs `permissions: contents: write` where `tauri-action` uploads artifacts; without it you may see `Resource not accessible by integration`. That is separate from **`qooti-releases`**, which is filled **by hand** below.
+
+### `blootapp/qooti-releases` (downloads users get — manual upload)
+
+End users and the updater pull assets from **[Releases · blootapp/qooti-releases](https://github.com/blootapp/qooti-releases/releases)**.
+
+For each new version, **after** `release-assets/v<version>/` is complete:
+
+1. Open **New release** on `qooti-releases`.
+2. Create tag **`v<version>`** (e.g. `v0.1.2`) and title as you prefer.
+3. Upload **all** files from `release-assets/v<version>/` (`.exe`, `.sig`, `.app.tar.gz`, `.sig`, `.dmg` if any, **`latest.json`**).
+4. Publish; set **Latest** when this is the current production release.
 
 ### Asset upload rule
 
@@ -230,21 +364,21 @@ Never mix:
 
 That mismatch is enough to break updater detection or download/install flow.
 
-## 7. Release order that should always be followed
+## 8. Release order that should always be followed
 
 Always follow this exact order:
 
-1. bump versions
-2. build signed installer
-3. generate new `latest.json`
-4. inspect `latest.json`
-5. upload `.exe`, `.sig`, and `latest.json`
-6. publish release
-7. test update from previous installed version
+1. Bump versions (and `Cargo.lock` if needed).
+2. Push to GitHub `main`.
+3. Build signed Windows NSIS installer.
+4. Run **`npm run release:github-upload-folder`** (merged `latest.json` + fill `release-assets/v<version>/`).
+5. Inspect `latest.json` and the staging folder.
+6. **Manually** upload **everything** in `release-assets/v<version>/` to [`blootapp/qooti-releases`](https://github.com/blootapp/qooti-releases/releases) (new tag `v<version>`).
+7. Test update from previous installed version.
 
 Do not upload assets before generating the new manifest.
 
-## 8. Post-release verification
+## 9. Post-release verification
 
 After publishing the release, test with an already installed previous version.
 
@@ -285,7 +419,7 @@ If logs show download failure:
 - check that the uploaded asset filename matches exactly
 - check that the `.sig` file matches the uploaded installer
 
-## 9. Common mistakes and how to avoid them
+## 10. Common mistakes and how to avoid them
 
 ### Mistake 1: Building new installer but not regenerating `latest.json`
 
@@ -339,7 +473,7 @@ Symptom:
 Use the working command from this guide:
 
 ```cmd
-cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=YOUR_PASSWORD&& npm run tauri build -- --bundles nsis"
+cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%TAURI_SIGNING_PRIVATE_KEY_PASSWORD%&& npm run tauri build -- --bundles nsis"
 ```
 
 ### Mistake 5: Uploading old assets to the newest release
@@ -353,7 +487,66 @@ Fix:
 
 - always compare filenames in GitHub release assets with the version you just built
 
-## 10. Quick release template
+### Mistake 6: Using invalid Rust target in workflow setup
+
+Symptom:
+
+- macOS job fails during `Setup Rust`
+- error mentions `rust-std for target universal-apple-darwin is unavailable`
+
+Fix:
+
+- do **not** pass `universal-apple-darwin` to rustup target install
+- use:
+  - `x86_64-apple-darwin`
+  - `aarch64-apple-darwin`
+
+### Mistake 7: Missing `contents: write` permission in release workflow
+
+Symptom:
+
+- build succeeds
+- release creation/upload fails with:
+  - `Resource not accessible by integration`
+
+Fix:
+
+- add workflow-level:
+  - `permissions: contents: write`
+
+### Mistake 8: Broken Apple cert secret formatting
+
+Symptom:
+
+- cert import fails (`security import` error)
+- or validation says certificate is empty/invalid
+
+Fix:
+
+- store `APPLE_CERTIFICATE` as base64 of `Key.p12` content
+- avoid accidental whitespace corruption
+- verify password matches `.p12`
+
+### Mistake 9: Expecting manual update check to auto-download
+
+Current app behavior is manual-first:
+
+- `Check for updates` only checks availability
+- download starts only when user clicks `Download update`
+
+Do not treat "update found but not downloaded" as a bug in current UX.
+
+## What not to do
+
+- Do not push release tags before workflow YAML is valid.
+- Do not use `secrets.*` in unsupported `if` contexts that break parsing.
+- Do not use `universal-apple-darwin` as rustup target.
+- Do not remove `contents: write` from release workflow.
+- Do not leave Apple cert secrets empty if mac signing is required.
+- Do not mix assets from different versions in one release.
+- Do not skip regenerating `latest.json` after Windows build.
+
+## 11. Quick release template
 
 Use this every time:
 
@@ -367,7 +560,7 @@ Use this every time:
 ### B. Build
 
 ```cmd
-cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=YOUR_PASSWORD&& npm run tauri build -- --bundles nsis"
+cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set TAURI_SIGNING_PRIVATE_KEY_PASSWORD=%TAURI_SIGNING_PRIVATE_KEY_PASSWORD%&& npm run tauri build -- --bundles nsis"
 ```
 
 ### C. Generate manifest
@@ -388,6 +581,10 @@ Must include:
 - `qooti_0.1.2_x64-setup.exe.sig`
 - `latest.json`
 
+### Copy to staging folder
+
+After the files exist under `nsis/`, copy them into `release-assets/v0.1.2/` (see section 6). For a full CI release, use `gh release download` into that folder instead.
+
 ### E. Open `latest.json` and verify
 
 - version is `0.1.2`
@@ -406,7 +603,7 @@ Upload:
 
 Test from previous installed version.
 
-## 11. Recommended final verification checklist
+## 12. Recommended final verification checklist
 
 Before saying a release is done, confirm all of these:
 
@@ -419,9 +616,10 @@ Before saying a release is done, confirm all of these:
 - `latest.json` URL points to the same tag and filename
 - GitHub release tag matches app version
 - GitHub release assets are the correct files for that version
+- `release-assets/v<version>/` contains every file you need (or you have downloaded the release via `gh release download`)
 - previous installed version detects update successfully
 
-## 12. Current project-specific paths
+## 13. Current project-specific paths
 
 Useful paths in this repo:
 
@@ -432,12 +630,14 @@ Useful paths in this repo:
   - `src-tauri/Cargo.toml`
 - installer output:
   - `src-tauri/target/release/bundle/nsis/`
+- staging folder for copied release artifacts:
+  - `release-assets/v<version>/`
 - manifest generator:
   - `scripts/generate-latest-json.js`
 - updater endpoint config:
   - `src-tauri/tauri.conf.json`
 
-## 13. One-line summary
+## 14. One-line summary
 
 For every new release:
 

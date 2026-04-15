@@ -25,6 +25,9 @@
     <link rel="stylesheet" href="./vendor/cropper.css" />
   </head>
   <body>
+    <div id="globalLoadingBar" class="global-loading-bar hidden" aria-hidden="true">
+      <span id="globalLoadingBarFill" class="global-loading-bar__fill"></span>
+    </div>
     <div id="app" class="app app--booting">
       <!-- Custom Title Bar -->
       <header class="title-bar">
@@ -55,45 +58,35 @@
         <div class="license-view__inner">
           <div class="license-view__brand">
             <img class="license-view__logo" src="assets/logo.png" alt="" />
-            <h1 class="license-view__title">Qooti</h1>
-            <p id="licenseViewSubtitle" class="license-view__subtitle" data-i18n="license.enterKey">Enter your license key to continue</p>
+            <p id="licenseViewSubtitle" class="license-view__subtitle" data-i18n="license.enterKey">Enter your Bloot user ID to continue</p>
           </div>
           <form id="licenseForm" class="license-form" novalidate>
-            <input type="text" id="licenseKeyInput" class="license-form__input" data-i18n-placeholder="license.placeholder" placeholder="Paste your key (e.g. QOOTI-XXXX-XXXX-XXXX)" autocomplete="off" spellcheck="false" />
+            <input type="text" id="licenseKeyInput" class="license-form__input" data-i18n-placeholder="license.placeholder" placeholder="Paste your Bloot ID (from bloot.app)" autocomplete="off" spellcheck="false" />
             <p id="licenseError" class="license-form__error hidden" role="alert"></p>
             <div class="license-form__actions">
               <button type="submit" id="licenseActivateBtn" class="license-form__submit">
-                <span class="license-form__submit-text" data-i18n="license.activate">Activate</span>
+                <span class="license-form__submit-text" data-i18n="activation.submit">Activate</span>
                 <span class="ui-icon ui-icon--sm license-form__submit-arrow" style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
               </button>
-              <button type="button" id="licenseRetryBtn" class="btn btn--secondary license-form__retry hidden" data-i18n="license.retryCheck">Retry check</button>
+              <button type="button" id="licenseReactivateBtn" class="btn btn--primary license-form__reactivate hidden" data-i18n="license.reactivate">Reactivate license</button>
             </div>
           </form>
-        </div>
-      </section>
-
-      <section id="profileSetupView" class="profile-setup-view hidden" aria-label="Profile setup">
-        <div class="profile-setup-view__bg" aria-hidden="true"></div>
-        <button type="button" id="profileSetupLangToggle" class="language-toggle language-toggle--profile" title="Switch language" aria-label="Switch language">
-          <span class="ui-icon language-toggle__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
-        </button>
-        <div class="profile-setup-view__inner">
-          <div class="profile-setup-view__avatar-wrap">
-            <button id="profileSetupAvatarBtn" type="button" class="profile-setup-view__avatar-btn" data-i18n-aria-label="profileSetup.uploadImage" aria-label="Upload profile image">
-              <span id="profileSetupAvatarPreview" class="profile-avatar profile-avatar--setup" aria-hidden="true"></span>
-            </button>
-            <p class="profile-setup-view__avatar-hint" data-i18n="profileSetup.uploadImage">Click to upload image</p>
-            <input id="profileSetupImageInput" type="file" accept="image/*" class="profile-setup-view__image-input" />
+          <div id="licenseConnectivityLoading" class="license-connectivity-state hidden" aria-live="polite">
+            <div class="license-connectivity-state__spinner" aria-hidden="true"></div>
+            <p id="licenseConnectivityLoadingText" class="license-connectivity-state__loading" data-i18n="offline.checking">Checking...</p>
           </div>
-
-          <div class="profile-setup-view__name-wrap">
-            <label for="profileSetupName" class="profile-setup-view__label" data-i18n="profileSetup.username">Username</label>
-            <input id="profileSetupName" type="text" maxlength="30" autocomplete="off" class="profile-setup-view__input" data-i18n-placeholder="profileSetup.placeholder" placeholder="Enter your username" />
-            <p id="profileSetupError" class="profile-setup-view__error hidden"></p>
+          <div id="licenseOfflineGate" class="license-connectivity-state license-offline-gate hidden" aria-live="polite">
+            <span class="ui-icon license-offline-gate__icon" style="--icon-url:url('assets/icons/remix/wifi-off-line.svg')" aria-hidden="true"></span>
+            <div class="license-offline-gate__copy">
+              <p id="licenseOfflineTitlePrimary" class="license-offline-gate__title">No internet connection</p>
+              <p id="licenseOfflineTitleSecondary" class="license-offline-gate__title-sub">Internet aloqasi yo'q</p>
+              <p id="licenseOfflineDescriptionPrimary" class="license-offline-gate__description">Connect to the internet to activate Qooti.</p>
+              <p id="licenseOfflineDescriptionSecondary" class="license-offline-gate__description-sub">Qootini faollashtirish uchun internetga ulaning.</p>
+            </div>
+            <button type="button" id="licenseOfflineRetryBtn" class="btn btn--secondary license-offline-gate__retry" data-i18n="offline.retry">Retry</button>
           </div>
-
-          <div class="profile-setup-view__actions">
-            <button id="profileSetupSaveBtn" type="button" class="btn btn--primary" disabled data-i18n="profileSetup.continue">Continue</button>
+          <div class="license-view__footer">
+            <a id="licenseGetAccessBtn" class="license-view__get-access" href="#" data-i18n="license.getAccess">Don't have a Bloot ID? Get access →</a>
           </div>
         </div>
       </section>
@@ -227,6 +220,8 @@
         <div class="dropdown__divider"></div>
         <button id="menuCollections" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/bookmark.svg')" aria-hidden="true"></span><span data-i18n="menu.collections">Collections</span></button>
         <div class="dropdown__divider"></div>
+        <button id="menuStore" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/shopping-bag-fill.svg')" aria-hidden="true"></span><span data-i18n="store.title">Store</span></button>
+        <div class="dropdown__divider"></div>
         <button id="menuMigrateTelegram" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/telegram.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateTelegram">Migrate from Telegram</span></button>
         <button id="menuMigrateNotion" class="dropdown__item"><span class="ui-icon ui-icon--sm dropdown__item-icon" style="--icon-url:url('assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span><span data-i18n="menu.migrateNotion">Migrate from Notion</span></button>
         <div class="dropdown__divider"></div>
@@ -316,10 +311,10 @@
             <div class="add-surface__import-options" data-i18n-aria-label="add.importOptions" aria-label="Import options">
               <div class="add-surface__import-title" data-i18n="add.importOptions">Import options</div>
               <div class="add-surface__import-actions">
-                <button id="addImportMediaBtn" type="button" class="btn btn--secondary" data-i18n="add.importMedia">Import media files</button>
-                <button id="addImportQootiBtn" type="button" class="btn btn--secondary" data-i18n="add.importQooti">Import .qooti package</button>
-                <button id="addImportTelegramBtn" type="button" class="btn btn--secondary" data-i18n="add.importTelegram">Import Telegram export</button>
-                <button id="addImportNotionBtn" type="button" class="btn btn--secondary" data-i18n="add.importNotion">Import from Notion</button>
+                <button id="addImportMediaBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--media" aria-hidden="true"></span><span data-i18n="add.importMedia">Import media files</span></button>
+                <button id="addImportQootiBtn" type="button" class="btn btn--secondary add-surface__import-btn"><img src="assets/icons/iconsolo.png" class="add-surface__import-icon add-surface__import-icon--qooti" aria-hidden="true" alt="" /><span data-i18n="add.importQooti">Import .qooti package</span></button>
+                <button id="addImportTelegramBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--telegram" aria-hidden="true"></span><span data-i18n="add.importTelegram">Import Telegram export</span></button>
+                <button id="addImportNotionBtn" type="button" class="btn btn--secondary add-surface__import-btn"><span class="add-surface__import-icon add-surface__import-icon--notion" aria-hidden="true"></span><span data-i18n="add.importNotion">Import from Notion</span></button>
               </div>
               <p class="add-surface__import-hint" data-i18n="add.importHint">Drag and drop media files, .qooti files, or a Telegram export folder.</p>
             </div>
@@ -479,6 +474,83 @@
             </div>
           </section>
 
+          <section id="storeView" class="store-view hidden" aria-label="Store">
+            <header class="store-header">
+              <button id="btnBackFromStore" class="store-header__back" title="Back (Esc)" aria-label="Back">
+                <span class="ui-icon" style="--icon-url:url('assets/icons/remix/arrow-left-s-line.svg')" aria-hidden="true"></span>
+              </button>
+              <div class="store-header__main">
+                <h1 class="store-header__title" data-i18n="store.title">Store</h1>
+                <p class="store-header__subtitle" data-i18n="store.subtitle">Pick as much as you like, or at least one to get started.</p>
+              </div>
+              <div class="store-header__meta">
+                <span id="storeCount" class="store-header__count" aria-live="polite"></span>
+                <label class="store-header__search-wrap" for="storeSearch">
+                  <span class="ui-icon store-header__search-icon" style="--icon-url:url('assets/icons/remix/search-line.svg')" aria-hidden="true"></span>
+                  <input
+                    type="search"
+                    id="storeSearch"
+                    class="store-header__search"
+                    data-i18n-placeholder="store.searchPlaceholder"
+                    placeholder="Search collections…"
+                    data-i18n-aria-label="store.searchPlaceholder"
+                    aria-label="Search collections"
+                  />
+                </label>
+              </div>
+            </header>
+            <div id="storeContent" class="store-content">
+              <div id="storeHero" class="store-hero"></div>
+              <div id="storeHeroDots" class="store-hero-dots" aria-label="Store highlights"></div>
+              <section id="storeFeatured" class="store-featured">
+                <h2 class="store-featured__title" data-i18n="store.featuredTitle">Featured Collections</h2>
+                <p class="store-featured__subtitle" data-i18n="store.featuredSubtitle">This week&apos;s curated collections</p>
+              </section>
+              <div id="storeGrid" class="store-grid"></div>
+              <div id="storeEmpty" class="store-empty hidden">
+                <p class="store-empty__title" data-i18n="store.empty">No collections found</p>
+                <p class="store-empty__hint" data-i18n="store.emptyHint">Try another search or check your internet connection.</p>
+              </div>
+            </div>
+            <div id="storeOnboardingOfflineGate" class="store-onboarding-offline hidden" aria-live="polite">
+              <h2 class="store-onboarding-offline__title" data-i18n="store.onboardingOfflineTitle">Internet aloqasi kerak</h2>
+              <p class="store-onboarding-offline__body" data-i18n="store.onboardingOfflineBody">
+                Kolleksiyalarni yuklash va hisobingizni sozlash uchun internetga ulang.
+              </p>
+              <button id="storeOnboardingRetryBtn" type="button" class="btn btn--primary store-onboarding-offline__retry" data-i18n="store.onboardingOfflineRetry">
+                Qayta urinish
+              </button>
+            </div>
+            <footer id="storeOnboardingCta" class="store-onboarding-cta hidden">
+              <div id="storeOnboardingLangWrap" class="store-onboarding-lang-wrap">
+                <button id="storeOnboardingLangToggle" type="button" class="store-onboarding-lang-btn language-toggle" data-i18n-title="language.toggle" data-i18n-aria-label="language.toggle" title="Toggle language" aria-label="Toggle language" aria-expanded="false" aria-haspopup="menu">
+                  <span class="ui-icon store-onboarding-lang-btn__globe" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
+                  <span id="storeOnboardingLangCode" class="store-onboarding-lang-btn__code">EN</span>
+                  <span class="ui-icon store-onboarding-lang-btn__chevron" style="--icon-url:url('assets/icons/remix/arrow-down-s-line.svg')" aria-hidden="true"></span>
+                </button>
+                <div id="storeOnboardingLangMenu" class="store-onboarding-lang-menu hidden" role="menu" aria-label="Language options">
+                  <button type="button" class="store-onboarding-lang-option" data-lang="en" role="menuitemradio" aria-checked="true">
+                    <span class="store-onboarding-lang-option__label">English</span>
+                    <span class="store-onboarding-lang-option__check" aria-hidden="true">✓</span>
+                  </button>
+                  <button type="button" class="store-onboarding-lang-option" data-lang="uz" role="menuitemradio" aria-checked="false">
+                    <span class="store-onboarding-lang-option__label">O'zbekcha</span>
+                    <span class="store-onboarding-lang-option__check" aria-hidden="true">✓</span>
+                  </button>
+                </div>
+              </div>
+              <div id="storeOnboardingStartWrap" class="store-onboarding-start-wrap disabled">
+                <div id="storeOnboardingStartTooltip" class="store-onboarding-start-tooltip" data-i18n="store.getStartedDisabledTooltip">
+                  Davom etish uchun kamida bitta paketni yuklab oling
+                </div>
+                <button id="storeOnboardingStartBtn" type="button" class="store-onboarding-cta__btn btn btn--primary is-disabled" disabled>
+                  <span class="store-onboarding-cta__btn-label" data-i18n="store.getStarted">Get started</span>
+                  <span class="ui-icon store-onboarding-cta__btn-arrow" style="--icon-url:url('assets/icons/remix/arrow-right-line.svg')" aria-hidden="true"></span>
+                </button>
+              </div>
+            </footer>
+          </section>
+
           <section id="telegramMigrationView" class="telegram-migration-view hidden" aria-label="Migrate from Telegram">
             <header class="telegram-migration-header">
               <button id="btnBackFromTelegramMigration" class="telegram-migration-header__back" title="Back (Esc)" aria-label="Back">
@@ -543,6 +615,10 @@
                     <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/translate-2.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.language">Language</span>
                   </button>
+                  <button type="button" class="settings-nav__item" data-tab="others" role="tab">
+                    <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
+                    <span class="settings-nav__label" data-i18n="settings.nav.others">Others</span>
+                  </button>
                   <button type="button" class="settings-nav__item" data-tab="license" role="tab">
                     <span class="ui-icon ui-icon--sm settings-nav__icon" style="--icon-url:url('assets/icons/remix/loop-left-line.svg')" aria-hidden="true"></span>
                     <span class="settings-nav__label" data-i18n="settings.nav.license">Update</span>
@@ -566,12 +642,10 @@
                       </div>
                       <input id="settingsAccountAvatarInput" type="file" accept="image/*" class="hidden" />
                     </div>
-                    <div class="settings-field settings-field--stacked">
-                      <label class="settings-field__label" for="settingsAccountUsernameInput" data-i18n="settings.username">Username</label>
-                      <div class="settings-account-name-row">
-                        <input id="settingsAccountUsernameInput" type="text" maxlength="30" class="settings-field__control settings-account-name-input" data-i18n-placeholder="profileSetup.placeholder" placeholder="Enter your username" />
-                        <button type="button" id="settingsAccountUsernameSave" class="btn btn--sm" data-i18n="settings.saveUsername">Save</button>
-                      </div>
+                    <div class="settings-account-synced-name settings-field settings-field--stacked">
+                      <span class="settings-field__label" data-i18n="settings.displayName">Display name</span>
+                      <div id="settingsAccountDisplayName" class="settings-account-display-name settings-field__control" aria-live="polite">—</div>
+                      <p class="settings-field__hint" data-i18n="settings.displayNameHint">Synced from your Bloot account when you activate or refresh your license.</p>
                     </div>
                     <div class="settings-info settings-account-license" id="licenseInfoBlock">
                       <div class="settings-info__row"><span class="settings-info__key" data-i18n="settings.plan">Plan</span><span id="settingsLicensePlan" class="settings-info__value">—</span></div>
@@ -768,6 +842,21 @@
                         <option value="en" data-i18n="settings.lang.en">English</option>
                         <option value="uz" data-i18n="settings.lang.uz">Uzbek</option>
                       </select>
+                    </div>
+                  </div>
+                </div>
+                <div id="settingsPanelOthers" class="settings-panel" role="tabpanel">
+                  <h2 class="settings-panel__title">
+                    <span class="ui-icon settings-panel__title-icon" style="--icon-url:url('assets/icons/remix/circle-ellipsis.svg')" aria-hidden="true"></span>
+                    <span data-i18n="settings.panel.others">Others</span>
+                  </h2>
+                  <div class="settings-group">
+                    <div class="settings-field settings-field--toggle">
+                      <div>
+                        <label class="settings-field__label" for="settingLaunchAtLogin" data-i18n="settings.launchAtLogin">Launch Qooti when I sign in</label>
+                        <p class="settings-license__hint" data-i18n="settings.launchAtLoginHint">Automatically open Qooti after system login on this device.</p>
+                      </div>
+                      <label class="settings-toggle-wrap"><input type="checkbox" id="settingLaunchAtLogin" class="settings-toggle" checked /><span class="settings-toggle__track"></span></label>
                     </div>
                   </div>
                 </div>

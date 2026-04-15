@@ -1,27 +1,26 @@
-/* Qooti License Admin */
-@import url("https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap");
+/* Qooti admin — minimal */
 
 :root {
-  --bg: #0f0f0f;
-  --bg-elevated: #161616;
-  --surface: #1c1c1c;
-  --surface-hover: #242424;
-  --border: #2a2a2a;
-  --border-focus: #3a3a3a;
-  --text: #f0f0f0;
-  --text-muted: #888;
-  --text-dim: #5a5a5a;
-  --accent: #6366f1;
-  --accent-hover: #818cf8;
-  --accent-muted: rgba(99, 102, 241, 0.15);
-  --success: #34d399;
-  --success-muted: rgba(52, 211, 153, 0.12);
-  --danger: #f87171;
-  --danger-muted: rgba(248, 113, 113, 0.12);
-  --radius: 12px;
-  --radius-sm: 8px;
-  --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
-  --transition: 0.2s ease;
+  --bg: #0a0a0a;
+  --bg-elevated: #111;
+  --surface: #111;
+  --surface-hover: #1a1a1a;
+  --border: #262626;
+  --border-focus: #404040;
+  --text: #e5e5e5;
+  --text-muted: #737373;
+  --text-dim: #525252;
+  --accent: #e5e5e5;
+  --accent-hover: #fafafa;
+  --accent-muted: rgba(255, 255, 255, 0.06);
+  --success: #86efac;
+  --success-muted: rgba(134, 239, 172, 0.08);
+  --danger: #fca5a5;
+  --danger-muted: rgba(252, 165, 165, 0.08);
+  --radius: 8px;
+  --radius-sm: 6px;
+  --shadow: none;
+  --transition: 0.15s ease;
 }
 
 * {
@@ -30,68 +29,54 @@
 
 body {
   margin: 0;
-  font-family: "DM Sans", system-ui, -apple-system, sans-serif;
-  font-size: 15px;
-  line-height: 1.55;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   min-height: 100vh;
-  padding: 32px 24px;
-}
-
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background: 
-    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99, 102, 241, 0.12), transparent),
-    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(99, 102, 241, 0.06), transparent);
-  pointer-events: none;
-  z-index: 0;
+  padding: 28px 20px 48px;
 }
 
 .admin {
   position: relative;
   z-index: 1;
-  max-width: 900px;
+  max-width: 960px;
   margin: 0 auto;
 }
 
 /* Tab bar */
 .admin__tabs {
   display: flex;
-  gap: 4px;
-  margin-bottom: 24px;
-  padding: 4px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  gap: 0;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .admin__tab {
-  padding: 10px 16px;
-  font-size: 14px;
+  padding: 10px 14px;
+  margin-bottom: -1px;
+  font-size: 13px;
   font-weight: 500;
   font-family: inherit;
   color: var(--text-muted);
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-bottom: 2px solid transparent;
   cursor: pointer;
   white-space: nowrap;
-  transition: color var(--transition), background var(--transition);
+  transition: color var(--transition), border-color var(--transition);
 }
 
 .admin__tab:hover {
   color: var(--text);
-  background: var(--surface-hover);
 }
 
 .admin__tab.is-active {
   color: var(--text);
-  background: var(--accent-muted);
-  color: var(--accent);
+  border-bottom-color: var(--text);
 }
 
 .admin__tab.hidden {
@@ -101,15 +86,16 @@ body::before {
 /* Panels */
 .admin__panel {
   display: none;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 24px;
-  box-shadow: var(--shadow);
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  box-shadow: none;
 }
 
 .admin__panel.is-active {
   display: block;
+  padding-top: 2px;
 }
 
 .panel__title {
@@ -129,22 +115,22 @@ body::before {
 }
 
 .panel__toolbar {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
 }
 
 .panel__search input,
 .panel__search select {
-  padding: 8px 12px;
-  font-size: 14px;
-  min-width: 120px;
+  padding: 8px 10px;
+  font-size: 13px;
+  min-width: 100px;
 }
 
 .panel__search input#licensesLicenseKey {
-  min-width: 220px;
+  min-width: 200px;
 }
 
 .panel__search {
@@ -152,6 +138,34 @@ body::before {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+}
+
+.panel__search--tight {
+  margin-bottom: 16px;
+  max-width: 520px;
+}
+
+.panel__search--tight input {
+  flex: 1 1 160px;
+  min-width: 140px;
+}
+
+.admin__lead {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.admin__mono {
+  font-size: 11px;
+  word-break: break-all;
+}
+
+.users-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .panel__pagination {
@@ -166,6 +180,8 @@ body::before {
 .table-wrap {
   overflow-x: auto;
   margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
 }
 
 .admin__table {
@@ -176,17 +192,17 @@ body::before {
 
 .admin__table th,
 .admin__table td {
-  padding: 10px 12px;
+  padding: 9px 10px;
   text-align: left;
   border-bottom: 1px solid var(--border);
 }
 
 .admin__table th {
-  font-weight: 600;
-  color: var(--text-muted);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 .table-empty {
@@ -368,26 +384,23 @@ body::before {
 
 /* Header */
 .admin__header {
-  margin-bottom: 40px;
-  text-align: center;
+  margin-bottom: 28px;
+  text-align: left;
 }
 
 .admin__title {
-  margin: 0 0 8px;
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  background: linear-gradient(135deg, var(--text) 0%, var(--text-muted) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  color: var(--text);
 }
 
 .admin__subtitle {
   margin: 0;
-  font-size: 14px;
+  font-size: 13px;
   color: var(--text-muted);
-  font-weight: 500;
+  font-weight: 400;
 }
 
 /* Legacy sections (Settings uses similar styling) */
@@ -478,8 +491,8 @@ select:hover {
 
 input:focus,
 select:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-muted);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 input::placeholder {
@@ -497,8 +510,8 @@ select {
 
 /* Buttons */
 .btn {
-  padding: 12px 20px;
-  font-size: 14px;
+  padding: 9px 16px;
+  font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   border: none;
@@ -508,15 +521,15 @@ select {
 }
 
 .btn:hover {
-  transform: translateY(-1px);
+  opacity: 0.92;
 }
 
 .btn:active {
-  transform: translateY(0);
+  opacity: 0.85;
 }
 
 .btn--primary {
-  color: #fff;
+  color: #0a0a0a;
   background: var(--accent);
 }
 

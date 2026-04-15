@@ -1,0 +1,4 @@
+/* Scoped polish for legal/help markdown (tables last row borders) */
+.legal-md tbody tr:last-child td {
+  border-bottom: none;
+}

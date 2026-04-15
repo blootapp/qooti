@@ -1,0 +1,23 @@
+{
+  "name": "bloot",
+  "short_name": "bloot",
+  "description": "Visual inspiration library for creatives",
+  "start_url": "/",
+  "display": "browser",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/assets/logo.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/assets/logo.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

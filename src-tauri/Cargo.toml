@@ -44,8 +44,10 @@ sha2 = "0.10"
 base64 = "0.22"
 dirs = "5"
 arboard = "3.6"
+hmac = "0.12.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-process = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-autostart = "2"

@@ -721,6 +721,8 @@ export function setupTauriApi() {
       safeInvoke("save_survey_data", { payload: payload || {} }),
     clearSurveyData: () => safeInvoke("clear_survey_data", {}),
     getSettings: () => safeInvoke("get_settings", {}),
+    setLaunchAtLoginEnabled: (enabled) =>
+      safeInvoke("set_launch_at_login_enabled", { enabled: !!enabled }),
     getLicenseCache: () => safeInvoke("get_license_cache", {}),
     validateLicense: (licenseKey) => safeInvoke("validate_license", { licenseKey: String(licenseKey || "").trim() }),
     checkCurrentLicenseWithServer: () => safeInvoke("check_current_license_with_server", {}),
@@ -817,8 +819,6 @@ export function setupTauriApi() {
         "dictionaryPath",
       ];
       const makeWebConfig = () => {
-        const ua = typeof navigator !== "undefined" ? String(navigator.userAgent || "") : "";
-        const isMacAppleWebKit = /Macintosh|Mac OS X/i.test(ua) && /AppleWebKit/i.test(ua);
         return {
         base: webBase,
         workerUrl: `${webBase}ocr-index-worker.js`,
@@ -835,9 +835,8 @@ export function setupTauriApi() {
         dictionaryPath: `${webBase}models/ppocr_keys_v1.txt`,
         wasmBase: webBase,
         source: "web",
-        // macOS WebKit worker contexts may not expose `Image` reliably.
-        // Prefer main-thread OCR there to avoid `Can't find variable: Image`.
-        preferMainThread: isMacAppleWebKit,
+        // Paddle path loads images via DOM Image(); workers do not have Image — use main thread in Tauri.
+        preferMainThread: typeof window !== "undefined" && !!window.__TAURI__,
       };
       };
 

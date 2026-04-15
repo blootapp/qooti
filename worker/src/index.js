@@ -1,18 +1,24 @@
 /**
  * Qooti License Worker
  * App: POST /license/validate, GET /license/status
+ * Bloot: POST /bloot/internal/register, POST /bloot/login (website)
  * Admin: GET/POST/PATCH /admin/licenses, /admin/licenses/:key, /admin/logs, /admin/notifications, DELETE /admin/notifications/:id
  * App: GET /app/notifications
  * Status derived at read time: valid = revoked_at IS NULL AND expires_at > now
  */
 
+import bcrypt from "bcryptjs";
+
 const LIFETIME_EXPIRY = 253402300799; // far future
 const LAST_SEEN_UPDATE_INTERVAL = 86400; // 24 hours
+const LICENSE_RATE_LIMIT_MAX = 120;
+const LICENSE_RATE_LIMIT_WINDOW_MS = 60_000;
+const LICENSE_RATE_BUCKETS = new Map();
 
 const CORS = {
-  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Origin": "https://bloot.app",
   "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret, X-Internal-Secret",
 };
 
 function json(data, status = 200) {
@@ -33,10 +39,83 @@ function deriveStatus(row) {
   return "valid";
 }
 
+function normEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
 function generateLicenseKey() {
-  const segment = () =>
-    Math.random().toString(36).toUpperCase().slice(2, 6).padStart(4, "0");
+  const segment = () => randomChars("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789", 4);
   return `QOOTI-${segment()}-${segment()}-${segment()}`;
+}
+
+function generateBlootPublicId() {
+  const segment = () => randomChars("abcdefghijklmnopqrstuvwxyz0123456789", 4);
+  return `BLT-${segment()}-${segment()}-${segment()}`;
+}
+
+function randomChars(alphabet, len) {
+  const chars = String(alphabet || "");
+  if (!chars || len <= 0) return "";
+  const out = [];
+  const bytes = new Uint8Array(len);
+  crypto.getRandomValues(bytes);
+  for (let i = 0; i < len; i += 1) {
+    out.push(chars[bytes[i] % chars.length]);
+  }
+  return out.join("");
+}
+
+function clientIp(request) {
+  return (
+    request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For") ||
+    "unknown"
+  );
+}
+
+function enforceRateLimit(request, keyPrefix, max, windowMs) {
+  const now = Date.now();
+  const key = `${keyPrefix}:${clientIp(request)}`;
+  const bucket = LICENSE_RATE_BUCKETS.get(key);
+  if (!bucket || now >= bucket.resetAt) {
+    LICENSE_RATE_BUCKETS.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (bucket.count >= max) return false;
+  bucket.count += 1;
+  return true;
+}
+
+async function signLicensePayload(env, payload, mode) {
+  const secret = String(env.LICENSE_RESPONSE_SIGNING_SECRET || "").trim();
+  if (!secret) {
+    return payload;
+  }
+  const status = String(payload.status || (payload.valid ? "valid" : "invalid"));
+  const line = [
+    `status=${status}`,
+    `valid=${payload.valid ? 1 : 0}`,
+    `plan_type=${payload.plan_type || ""}`,
+    `expires_at=${payload.expires_at ?? ""}`,
+    `error=${payload.error || ""}`,
+    `mode=${mode || "status"}`,
+  ].join("|");
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(line)
+  );
+  const hex = Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+  return { ...payload, signature: hex };
 }
 
 async function logAction(env, action, licenseKey, details) {
@@ -106,6 +185,17 @@ export default {
 
     const url = new URL(request.url);
     const path = url.pathname;
+    if (path === "/license/validate" || path === "/license/status") {
+      const allowed = enforceRateLimit(
+        request,
+        path,
+        LICENSE_RATE_LIMIT_MAX,
+        LICENSE_RATE_LIMIT_WINDOW_MS
+      );
+      if (!allowed) {
+        return json({ valid: false, error: "Too many requests" }, 429);
+      }
+    }
 
     if (path.startsWith("/admin/")) {
       const secret = request.headers.get("X-Admin-Secret");
@@ -157,7 +247,24 @@ export default {
       if (path === "/admin/notifications" && request.method === "GET") {
         return listNotifications(url.searchParams, env);
       }
+      if (path === "/admin/users" && request.method === "GET") {
+        return listUsers(url.searchParams, env);
+      }
+      const matchUser = path.match(/^\/admin\/users\/([^/]+)\/?$/);
+      if (matchUser && request.method === "DELETE") {
+        return deleteUserAccount(decodeURIComponent(matchUser[1]), env);
+      }
       return json({ error: "Not found" }, 404);
+    }
+
+    if (path === "/bloot/internal/register" && request.method === "POST") {
+      return internalRegister(request, env);
+    }
+    if (path === "/bloot/internal/reset-password" && request.method === "POST") {
+      return internalResetPassword(request, env);
+    }
+    if (path === "/bloot/login" && request.method === "POST") {
+      return blootLogin(request, env);
     }
 
     if (path === "/license/validate" && request.method === "POST") {
@@ -176,6 +283,155 @@ export default {
   },
 };
 
+async function recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, planType, now) {
+  if (planType !== "trial") return;
+  try {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO trial_device_claims (device_fingerprint, app_id, first_user_id, created_at) VALUES (?, 'qooti', ?, ?)`
+    )
+      .bind(deviceFingerprint, licenseKey, now)
+      .run();
+  } catch (_) {}
+}
+
+/**
+ * Accept only Bloot user IDs for app activation:
+ * - users.public_id (BLT-xxxx-xxxx-xxxx)
+ * - legacy users.id (UUID)
+ * Username/email must NOT activate desktop app licenses.
+ */
+async function resolveLicenseLookupKey(env, inputKey) {
+  const raw = String(inputKey || "").trim();
+  if (!raw) return "";
+  try {
+    const exact = await env.DB.prepare("SELECT license_key FROM licenses WHERE license_key = ?")
+      .bind(raw)
+      .first();
+    if (exact?.license_key) return String(exact.license_key);
+  } catch (_) {}
+  try {
+    const matches = await env.DB.prepare(
+      `SELECT id, public_id FROM users
+       WHERE LOWER(public_id) = LOWER(?) OR id = ?
+       LIMIT 2`
+    )
+      .bind(raw, raw)
+      .all();
+    const rows = matches?.results || [];
+    if (rows.length === 1) {
+      const userId = rows[0]?.id != null ? String(rows[0].id).trim() : "";
+      const publicId = rows[0]?.public_id != null ? String(rows[0].public_id).trim() : "";
+      if (userId) {
+        try {
+          const lic = await env.DB.prepare(
+            `SELECT license_key
+             FROM licenses
+             WHERE user_id = ?
+             ORDER BY (revoked_at IS NULL) DESC, expires_at DESC
+             LIMIT 1`
+          )
+            .bind(userId)
+            .first();
+          if (lic?.license_key) return String(lic.license_key);
+        } catch (_) {}
+      }
+      if (publicId) return publicId;
+      if (userId) return userId;
+    }
+  } catch (_) {}
+  return raw;
+}
+
+async function ensureLicenseForBlootIdActivation(env, inputKey) {
+  const raw = String(inputKey || "").trim();
+  if (!raw) return null;
+  let user = null;
+  try {
+    user = await env.DB.prepare(
+      `SELECT id, public_id, email
+       FROM users
+       WHERE LOWER(public_id) = LOWER(?) OR id = ?
+       LIMIT 1`
+    )
+      .bind(raw, raw)
+      .first();
+  } catch (_) {}
+  if (!user?.id) return null;
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT license_key FROM licenses WHERE user_id = ? LIMIT 1"
+    )
+      .bind(user.id)
+      .first();
+    if (existing?.license_key) return String(existing.license_key);
+  } catch (_) {}
+  const now = Math.floor(Date.now() / 1000);
+  const key = String(user.public_id || user.id || "").trim();
+  if (!key) return null;
+  try {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO licenses
+       (license_key, user_id, email, app_id, plan_type, issued_at, expires_at, device_limit, active_devices)
+       VALUES (?, ?, ?, 'qooti', 'trial', ?, ?, 1, '[]')`
+    )
+      .bind(key, user.id, user.email || null, now, now + 7 * 86400)
+      .run();
+    const ensured = await env.DB.prepare(
+      "SELECT license_key FROM licenses WHERE user_id = ? ORDER BY issued_at DESC LIMIT 1"
+    )
+      .bind(user.id)
+      .first();
+    return ensured?.license_key ? String(ensured.license_key) : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Resolve Bloot username for license activation/status responses. */
+async function blootUsernameForLicense(env, licenseKey, inputKey = "") {
+  try {
+    const lic = await env.DB.prepare(
+      "SELECT user_id, license_key FROM licenses WHERE license_key = ?"
+    )
+      .bind(licenseKey)
+      .first();
+    if (lic) {
+      const u = await env.DB.prepare(
+        "SELECT username FROM users WHERE id = ? OR public_id = ? LIMIT 1"
+      )
+        .bind(lic.user_id, lic.license_key)
+        .first();
+      const name = u?.username != null ? String(u.username).trim() : "";
+      if (name) return name;
+    }
+    const fallbackKeys = [String(inputKey || "").trim(), String(licenseKey || "").trim()]
+      .filter(Boolean);
+    for (const key of fallbackKeys) {
+      const u = await env.DB.prepare(
+        "SELECT username FROM users WHERE LOWER(public_id) = LOWER(?) OR id = ? LIMIT 1"
+      )
+        .bind(key, key)
+        .first();
+      const name = u?.username != null ? String(u.username).trim() : "";
+      if (name) return name;
+    }
+    return null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function licenseValidateSuccessPayload(row, blootUsername) {
+  const o = {
+    valid: true,
+    status: "valid",
+    plan_type: row.plan_type || "lifetime",
+    expires_at: row.expires_at,
+  };
+  if (blootUsername) o.username = blootUsername;
+  return o;
+}
+
 async function validateLicense(request, env) {
   let body;
   try {
@@ -183,17 +439,30 @@ async function validateLicense(request, env) {
   } catch (_) {
     return json({ error: "Invalid JSON" }, 400);
   }
-  const licenseKey = (body.license_key || "").trim();
+  const licenseKeyInput = (body.license_key || "").trim();
   const deviceFingerprint = (body.device_fingerprint || "").trim();
-  if (!licenseKey || !deviceFingerprint) {
+  if (!licenseKeyInput || !deviceFingerprint) {
     return json({ error: "license_key and device_fingerprint required" }, 400);
   }
+  let licenseKey = await resolveLicenseLookupKey(env, licenseKeyInput);
 
-  const row = await env.DB.prepare(
+  let row = await env.DB.prepare(
     "SELECT license_key, plan_type, expires_at, device_limit, revoked_at FROM licenses WHERE license_key = ?"
   )
     .bind(licenseKey)
     .first();
+
+  if (!row) {
+    const repairedKey = await ensureLicenseForBlootIdActivation(env, licenseKeyInput);
+    if (repairedKey) {
+      licenseKey = repairedKey;
+      row = await env.DB.prepare(
+        "SELECT license_key, plan_type, expires_at, device_limit, revoked_at FROM licenses WHERE license_key = ?"
+      )
+        .bind(licenseKey)
+        .first();
+    }
+  }
 
   if (!row) {
     return json({ valid: false, error: "Invalid license key" }, 200);
@@ -208,8 +477,8 @@ async function validateLicense(request, env) {
     return json({ valid: false, error: "License expired" }, 200);
   }
 
-  // Use license_devices if table exists, else fall back to active_devices
-  let deviceCount = 0;
+  const blootUsername = await blootUsernameForLicense(env, licenseKey, licenseKeyInput);
+
   let existingDevice = null;
   try {
     const deviceRow = await env.DB.prepare(
@@ -221,7 +490,6 @@ async function validateLicense(request, env) {
   } catch (_) {}
 
   if (existingDevice) {
-    // Device already registered: update last_seen sparingly (once per day)
     const lastSeen = existingDevice.last_seen || 0;
     if (now - lastSeen >= LAST_SEEN_UPDATE_INTERVAL) {
       try {
@@ -232,15 +500,32 @@ async function validateLicense(request, env) {
           .run();
       } catch (_) {}
     }
-    return json({
-      valid: true,
-      status: "valid",
-      plan_type: row.plan_type || "lifetime",
-      expires_at: row.expires_at,
-    });
+    const payload = await signLicensePayload(
+      env,
+      licenseValidateSuccessPayload(row, blootUsername),
+      "activate"
+    );
+    return json(payload);
   }
 
-  // New device: check limit
+  if (row.plan_type === "trial") {
+    const claim = await env.DB.prepare(
+      "SELECT first_user_id FROM trial_device_claims WHERE device_fingerprint = ? AND app_id = ?"
+    )
+      .bind(deviceFingerprint, "qooti")
+      .first();
+    if (claim && claim.first_user_id !== licenseKey) {
+      return json(
+        {
+          valid: false,
+          error:
+            "Trial already used on this device. Use your Bloot account or purchase an extension.",
+        },
+        200
+      );
+    }
+  }
+
   let countRow;
   try {
     countRow = await env.DB.prepare(
@@ -251,10 +536,9 @@ async function validateLicense(request, env) {
   } catch (_) {
     countRow = { c: 0 };
   }
-  const limit = row.device_limit || 3;
+  const limit = row.device_limit || 1;
   const count = countRow?.c ?? 0;
 
-  // Fallback: if license_devices empty but licenses has active_devices
   if (count === 0) {
     try {
       const oldRow = await env.DB.prepare(
@@ -273,12 +557,13 @@ async function validateLicense(request, env) {
           )
             .bind(licenseKey, deviceFingerprint, now, now)
             .run();
-          return json({
-            valid: true,
-            status: "valid",
-            plan_type: row.plan_type || "lifetime",
-            expires_at: row.expires_at,
-          });
+          await recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, row.plan_type, now);
+          const payload = await signLicensePayload(
+            env,
+            licenseValidateSuccessPayload(row, blootUsername),
+            "activate"
+          );
+          return json(payload);
         }
         if (arr.length >= limit) {
           return json({ valid: false, error: "Device limit reached" }, 200);
@@ -294,12 +579,13 @@ async function validateLicense(request, env) {
         )
           .bind(licenseKey, deviceFingerprint, now, now)
           .run();
-        return json({
-          valid: true,
-          status: "valid",
-          plan_type: row.plan_type || "lifetime",
-          expires_at: row.expires_at,
-        });
+        await recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, row.plan_type, now);
+        const payload = await signLicensePayload(
+          env,
+          licenseValidateSuccessPayload(row, blootUsername),
+          "activate"
+        );
+        return json(payload);
       }
     } catch (_) {}
   }
@@ -318,35 +604,100 @@ async function validateLicense(request, env) {
     return json({ valid: false, error: "Database error" }, 500);
   }
 
-  return json({
-    valid: true,
-    status: "valid",
-    plan_type: row.plan_type || "lifetime",
-    expires_at: row.expires_at,
-  });
+  await recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, row.plan_type, now);
+
+  const payload = await signLicensePayload(
+    env,
+    licenseValidateSuccessPayload(row, blootUsername),
+    "activate"
+  );
+  return json(payload);
 }
 
 async function getLicenseStatusForApp(licenseKey, deviceFingerprint, env) {
   if (!licenseKey) return json({ valid: false }, 400);
+  const device = String(deviceFingerprint || "").trim();
+  if (!device) {
+    return json({ valid: false, error: "device_fingerprint required" }, 400);
+  }
+  const resolvedLicenseKey = await resolveLicenseLookupKey(env, licenseKey);
 
   const row = await env.DB.prepare(
     "SELECT license_key, plan_type, expires_at, revoked_at FROM licenses WHERE license_key = ?"
   )
-    .bind(licenseKey)
+    .bind(resolvedLicenseKey)
     .first();
 
   if (!row) return json({ valid: false });
 
   const now = Math.floor(Date.now() / 1000);
-  const valid =
-    row.revoked_at == null && row.expires_at > now;
+  if (row.revoked_at != null) {
+    return json({
+      valid: false,
+      status: "revoked",
+      error: "License revoked",
+      plan_type: row.plan_type || "lifetime",
+      expires_at: row.expires_at,
+    });
+  }
+  if (row.expires_at <= now) {
+    return json({
+      valid: false,
+      status: "expired",
+      error: "License expired",
+      plan_type: row.plan_type || "lifetime",
+      expires_at: row.expires_at,
+    });
+  }
 
-  return json({
-    valid,
-    status: valid ? "valid" : row.revoked_at ? "revoked" : "expired",
+  // Status must match validate: only registered devices stay valid (admin device reset revokes this device).
+  let deviceRow = null;
+  try {
+    deviceRow = await env.DB.prepare(
+      "SELECT device_fingerprint, last_seen FROM license_devices WHERE license_key = ? AND device_fingerprint = ?"
+    )
+      .bind(resolvedLicenseKey, device)
+      .first();
+  } catch (_) {}
+
+  const blootUsername = await blootUsernameForLicense(env, resolvedLicenseKey, licenseKey);
+
+  if (!deviceRow) {
+    const payload = {
+      valid: false,
+      status: "invalid",
+      error: "This device is not activated for this license.",
+      plan_type: row.plan_type || "lifetime",
+      expires_at: row.expires_at,
+    };
+    if (blootUsername) payload.username = blootUsername;
+    return json(payload);
+  }
+
+  const lastSeen = deviceRow.last_seen || 0;
+  if (now - lastSeen >= LAST_SEEN_UPDATE_INTERVAL) {
+    try {
+      await env.DB.prepare(
+        "UPDATE license_devices SET last_seen = ? WHERE license_key = ? AND device_fingerprint = ?"
+      )
+        .bind(now, resolvedLicenseKey, device)
+        .run();
+    } catch (_) {}
+  }
+
+  const payload = {
+    valid: true,
+    status: "valid",
     plan_type: row.plan_type || "lifetime",
     expires_at: row.expires_at,
-  });
+  };
+  if (blootUsername) payload.username = blootUsername;
+  const signed = await signLicensePayload(
+    env,
+    payload,
+    "status"
+  );
+  return json(signed);
 }
 
 async function listLicenses(params, env) {
@@ -354,6 +705,7 @@ async function listLicenses(params, env) {
   const limit = Math.min(50, Math.max(1, parseInt(params.get("limit"), 10) || 20));
   const offset = (page - 1) * limit;
   const licenseKey = (params.get("license_key") || "").trim();
+  const email = normEmail(params.get("email") || "");
   const status = params.get("status");
   const planType = params.get("plan_type");
   const expirationWindow = params.get("expiration_window"); // expiring_7 | expiring_30 | expired
@@ -364,7 +716,7 @@ async function listLicenses(params, env) {
   let where = [];
   let args = [];
 
-  // License key: exact match, overrides other filters when provided
+  // License key: exact match (Bloot ID or legacy QOOTI- key)
   if (licenseKey) {
     where.push("l.license_key = ?");
     args.push(licenseKey);
@@ -380,7 +732,7 @@ async function listLicenses(params, env) {
     } else if (status === "revoked") {
       where.push("l.revoked_at IS NOT NULL");
     }
-    if (planType === "lifetime" || planType === "yearly") {
+    if (planType === "lifetime" || planType === "yearly" || planType === "trial") {
       where.push("l.plan_type = ?");
       args.push(planType);
     }
@@ -412,10 +764,15 @@ async function listLicenses(params, env) {
     }
   }
 
+  if (email) {
+    where.push("LOWER(l.email) = ?");
+    args.push(email);
+  }
+
   const whereClause = where.length ? "WHERE " + where.join(" AND ") : "";
 
   const baseSql = `
-    SELECT l.license_key, l.plan_type, l.issued_at, l.expires_at, l.device_limit, l.revoked_at,
+    SELECT l.license_key, l.email, l.plan_type, l.issued_at, l.expires_at, l.device_limit, l.revoked_at,
            (SELECT COUNT(*) FROM license_devices d WHERE d.license_key = l.license_key) as device_count
     FROM licenses l
     ${whereClause}
@@ -439,10 +796,11 @@ async function listLicenses(params, env) {
     return {
       license_key: r.license_key,
       license_key_masked: maskKey(r.license_key),
+      email: r.email || null,
       plan_type: r.plan_type,
       issued_at: r.issued_at,
       expires_at: r.expires_at,
-      device_limit: r.device_limit ?? 3,
+      device_limit: r.device_limit ?? 1,
       device_count: r.device_count ?? 0,
       status: s,
     };
@@ -457,8 +815,117 @@ async function listLicenses(params, env) {
   });
 }
 
+/** Bloot website accounts (D1 `users` table). No password fields. */
+async function listUsers(params, env) {
+  const page = Math.max(1, parseInt(params.get("page"), 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(params.get("limit"), 10) || 30));
+  const offset = (page - 1) * limit;
+  const idQ = (params.get("id") || "").trim();
+  const emailQ = (params.get("email") || "").trim().toLowerCase();
+
+  let whereClause = "";
+  const args = [];
+  if (idQ) {
+    whereClause = "WHERE (u.id = ? OR u.public_id = ?)";
+    args.push(idQ, idQ);
+  } else if (emailQ) {
+    whereClause = "WHERE LOWER(u.email) LIKE ?";
+    args.push(`%${emailQ}%`);
+  }
+
+  const list = await env.DB.prepare(
+    `SELECT
+      u.id, u.public_id, u.email, u.name, u.surname, u.username, u.created_at,
+      l.license_key, l.plan_type, l.expires_at, l.revoked_at
+    FROM users u
+    LEFT JOIN licenses l ON l.user_id = u.id AND l.app_id = 'qooti'
+    ${whereClause}
+    ORDER BY u.created_at DESC
+    LIMIT ? OFFSET ?`
+  )
+    .bind(...args, limit, offset)
+    .all();
+
+  const totalRow = await env.DB.prepare(
+    `SELECT COUNT(*) as c FROM users u ${whereClause}`
+  )
+    .bind(...args)
+    .first();
+
+  const total = totalRow?.c ?? 0;
+
+  return json({
+    users: (list.results || []).map((r) => ({
+      id: r.id,
+      public_id: r.public_id || null,
+      email: r.email,
+      name: r.name,
+      surname: r.surname,
+      username: r.username,
+      created_at: r.created_at,
+      license_key: r.license_key || null,
+      license_plan: r.plan_type || null,
+      license_status: r.license_key
+        ? deriveStatus({ revoked_at: r.revoked_at, expires_at: r.expires_at })
+        : "none",
+      license_expires_at: r.expires_at || null,
+    })),
+    total,
+    page,
+    limit,
+  });
+}
+
+async function deleteUserAccount(userId, env) {
+  const uid = String(userId || "").trim();
+  if (!uid) return json({ error: "User id required" }, 400);
+  const user = await env.DB.prepare("SELECT id, public_id, email FROM users WHERE id = ? OR public_id = ?")
+    .bind(uid, uid)
+    .first();
+  if (!user) return json({ error: "User not found" }, 404);
+  const internalId = String(user.id);
+  const publicId = String(user.public_id || "");
+
+  const licRows = await env.DB.prepare(
+    "SELECT license_key, revoked_at FROM licenses WHERE user_id = ? OR license_key = ? OR license_key = ? OR LOWER(email) = LOWER(?)"
+  )
+    .bind(internalId, internalId, publicId, user.email || "")
+    .all();
+  const licenses = licRows?.results || [];
+  const active = licenses.filter((l) => l.revoked_at == null);
+  if (active.length > 0) {
+    return json({ error: "Revoke all licenses for this account before deleting it." }, 400);
+  }
+
+  for (const l of licenses) {
+    await env.DB.prepare("DELETE FROM license_devices WHERE license_key = ?")
+      .bind(l.license_key)
+      .run();
+    await env.DB.prepare("DELETE FROM licenses WHERE license_key = ?")
+      .bind(l.license_key)
+      .run();
+  }
+  await env.DB.prepare("DELETE FROM trial_device_claims WHERE first_user_id = ? OR first_user_id = ?")
+    .bind(internalId, publicId)
+    .run();
+  await env.DB.prepare("DELETE FROM users WHERE id = ?")
+    .bind(internalId)
+    .run();
+
+  await logAction(
+    env,
+    "bloot_user_deleted",
+    publicId || internalId,
+    JSON.stringify({ email: user.email || null, deleted_licenses: licenses.length })
+  );
+  return json({ ok: true, deleted_licenses: licenses.length });
+}
+
 function maskKey(key) {
-  if (!key || key.length < 12) return "****";
+  if (!key || key.length < 8) return "****";
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) {
+    return key.slice(0, 4) + "…" + key.slice(-4);
+  }
   const parts = key.split("-");
   if (parts.length >= 4) {
     return `${parts[0]}-XXXX-XXXX-${parts[3].slice(-4)}`;
@@ -474,7 +941,8 @@ async function createLicense(request, env) {
     return json({ error: "Invalid JSON" }, 400);
   }
   const planType = body.planType === "yearly" ? "yearly" : "lifetime";
-  const deviceLimit = Math.max(1, parseInt(body.deviceLimit, 10) || 3);
+  // Qooti licenses are single-device only.
+  const deviceLimit = 1;
   const durationYears = Math.max(1, parseInt(body.durationYears, 10) || 1);
 
   const issuedAt = Math.floor(Date.now() / 1000);
@@ -488,10 +956,19 @@ async function createLicense(request, env) {
   while (attempts < 10) {
     try {
       await env.DB.prepare(
-        `INSERT INTO licenses (license_key, user_id, plan_type, issued_at, expires_at, device_limit, active_devices)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO licenses (license_key, user_id, email, app_id, plan_type, issued_at, expires_at, device_limit, active_devices)
+         VALUES (?, ?, ?, 'qooti', ?, ?, ?, ?, ?)`
       )
-        .bind(licenseKey, body.userId || "admin", planType, issuedAt, expiresAt, deviceLimit, "[]")
+        .bind(
+          licenseKey,
+          body.userId || "admin",
+          normalizeOptionalText(body.email) || null,
+          planType,
+          issuedAt,
+          expiresAt,
+          deviceLimit,
+          "[]"
+        )
         .run();
       await logAction(env, "license_created", licenseKey, JSON.stringify({ planType, deviceLimit }));
       return json({ ok: true, license_key: licenseKey });
@@ -511,7 +988,7 @@ async function getLicenseDetails(licenseKey, env) {
   if (!licenseKey) return json({ error: "License key required" }, 400);
 
   const row = await env.DB.prepare(
-    "SELECT license_key, user_id, plan_type, issued_at, expires_at, device_limit, revoked_at FROM licenses WHERE license_key = ?"
+    "SELECT license_key, user_id, email, plan_type, issued_at, expires_at, device_limit, revoked_at FROM licenses WHERE license_key = ?"
   )
     .bind(licenseKey)
     .first();
@@ -535,6 +1012,7 @@ async function getLicenseDetails(licenseKey, env) {
   return json({
     license_key: row.license_key,
     user_id: row.user_id,
+    email: row.email || null,
     plan_type: row.plan_type,
     issued_at: row.issued_at,
     expires_at: row.expires_at,
@@ -569,20 +1047,19 @@ async function editLicense(licenseKey, request, env) {
 
   let planType = row.plan_type;
   let expiresAt = row.expires_at;
-  let deviceLimit = row.device_limit;
+  let deviceLimit = 1;
 
-  if (body.planType === "lifetime" || body.planType === "yearly") {
+  if (body.planType === "lifetime" || body.planType === "yearly" || body.planType === "trial") {
     planType = body.planType;
     if (planType === "lifetime") {
       expiresAt = LIFETIME_EXPIRY;
-    } else if (body.durationYears) {
+    } else if (planType === "yearly" && body.durationYears) {
       const years = Math.max(1, parseInt(body.durationYears, 10) || 1);
       expiresAt = row.issued_at + years * 31536000;
     }
   }
-  if (body.deviceLimit != null) {
-    deviceLimit = Math.max(1, parseInt(body.deviceLimit, 10) || 3);
-  }
+  // Keep single-device policy even when admin sends deviceLimit.
+  deviceLimit = 1;
   if (body.expiresAt != null && typeof body.expiresAt === "number") {
     expiresAt = body.expiresAt;
   }
@@ -715,7 +1192,7 @@ async function createNotification(request, env) {
   const createdAt = Math.floor(Date.now() / 1000);
   const id = typeof crypto?.randomUUID === "function"
     ? crypto.randomUUID()
-    : `${createdAt}_${Math.random().toString(36).slice(2, 10)}`;
+    : `${createdAt}_${randomChars("abcdefghijklmnopqrstuvwxyz0123456789", 8)}`;
   const isActive = body.is_active === undefined ? true : !!body.is_active;
 
   await env.DB.prepare(
@@ -774,4 +1251,139 @@ async function listNotifications(params, env, options = {}) {
     .bind(limit)
     .all();
   return json({ notifications: rows.results || [] });
+}
+
+async function internalRegister(request, env) {
+  const secret = request.headers.get("X-Internal-Secret");
+  if (!secret || secret !== env.INTERNAL_SECRET) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const email = normEmail(body.email);
+  const passwordHash = String(body.passwordHash || "").trim();
+  const name = String(body.name || "").trim();
+  const surname = String(body.surname || "").trim();
+  const username = String(body.username || "").trim();
+  if (!email || !passwordHash || !name || !surname || !username) {
+    return json({ error: "Missing fields" }, 400);
+  }
+  const exists = await env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
+  if (exists) return json({ error: "Email taken" }, 409);
+  const id = crypto.randomUUID();
+  let publicId = "";
+  for (let i = 0; i < 8; i += 1) {
+    const candidate = generateBlootPublicId();
+    const publicTaken = await env.DB.prepare("SELECT 1 FROM users WHERE public_id = ?")
+      .bind(candidate)
+      .first();
+    if (!publicTaken) {
+      publicId = candidate;
+      break;
+    }
+  }
+  if (!publicId) return json({ error: "Could not generate public id" }, 500);
+  const now = Math.floor(Date.now() / 1000);
+  const trialSec = 7 * 86400;
+  const expiresAt = now + trialSec;
+  try {
+    await env.DB.prepare(
+      `INSERT INTO users (id, public_id, email, password_hash, name, surname, username, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(id, publicId, email, passwordHash, name, surname, username, now)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO licenses (license_key, user_id, email, app_id, plan_type, issued_at, expires_at, device_limit, active_devices)
+       VALUES (?, ?, ?, 'qooti', 'trial', ?, ?, 1, '[]')`
+    )
+      .bind(publicId, id, email, now, expiresAt)
+      .run();
+  } catch (e) {
+    return json({ error: e.message || "Database error" }, 500);
+  }
+  await logAction(env, "bloot_user_registered", publicId, JSON.stringify({ email, internal_id: id }));
+  return json({ ok: true, blootUserId: publicId, email, name, surname, username });
+}
+
+async function blootLogin(request, env) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const identifier = String(body.identifier || body.email || "").trim();
+  const password = String(body.password || "");
+  if (!identifier || !password) return json({ error: "Email/username and password required" }, 400);
+  const email = normEmail(identifier);
+  const uniqueRow = await env.DB.prepare(
+    `SELECT id, public_id, email, name, surname, username, password_hash
+     FROM users
+     WHERE LOWER(email) = ? OR LOWER(public_id) = ? OR id = ?
+     LIMIT 1`
+  )
+    .bind(email, identifier.toLowerCase(), identifier)
+    .first();
+  let row = uniqueRow;
+  if (!row) {
+    const byUsername = await env.DB.prepare(
+      `SELECT id, public_id, email, name, surname, username, password_hash
+       FROM users
+       WHERE LOWER(username) = ?
+       LIMIT 2`
+    )
+      .bind(identifier.toLowerCase())
+      .all();
+    const rows = byUsername?.results || [];
+    if (rows.length > 1) {
+      return json({ error: "Duplicate username found. Please login with email or Bloot ID." }, 409);
+    }
+    row = rows.length === 1 ? rows[0] : null;
+  }
+  if (!row) return json({ error: "Invalid credentials" }, 401);
+  const ok = await bcrypt.compare(password, row.password_hash);
+  if (!ok) return json({ error: "Invalid credentials" }, 401);
+  return json({
+    ok: true,
+    user: {
+      blootUserId: row.public_id || row.id,
+      email: row.email,
+      name: row.name,
+      surname: row.surname,
+      username: row.username,
+    },
+  });
+}
+
+async function internalResetPassword(request, env) {
+  const secret = request.headers.get("X-Internal-Secret");
+  if (!secret || secret !== env.INTERNAL_SECRET) {
+    return json({ error: "Unauthorized" }, 401);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch (_) {
+    return json({ error: "Invalid JSON" }, 400);
+  }
+  const email = normEmail(body.email);
+  const passwordHash = String(body.passwordHash || "").trim();
+  if (!email || !passwordHash) {
+    return json({ error: "Missing fields" }, 400);
+  }
+  const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
+    .bind(email)
+    .first();
+  if (!existing) {
+    return json({ error: "User not found" }, 404);
+  }
+  await env.DB.prepare("UPDATE users SET password_hash = ? WHERE email = ?")
+    .bind(passwordHash, email)
+    .run();
+  await logAction(env, "bloot_password_reset", existing.id, JSON.stringify({ email }));
+  return json({ ok: true });
 }

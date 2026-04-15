@@ -3,18 +3,19 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Qooti License Admin</title>
+  <title>Admin — Qooti</title>
   <link rel="stylesheet" href="admin.css" />
 </head>
 <body>
   <div class="admin">
     <header class="admin__header">
-      <h1 class="admin__title">Qooti License Admin</h1>
-      <p class="admin__subtitle">Control room for license management</p>
+      <h1 class="admin__title">Admin</h1>
+      <p class="admin__subtitle">Licenses and Bloot accounts</p>
     </header>
 
     <nav class="admin__tabs" role="tablist">
       <button type="button" class="admin__tab is-active" data-tab="licenses" role="tab">Licenses</button>
+      <button type="button" class="admin__tab" data-tab="users" role="tab">Users</button>
       <button type="button" class="admin__tab" data-tab="create" role="tab">Create License</button>
       <button type="button" class="admin__tab" data-tab="notifications" role="tab">Notifications</button>
       <button type="button" class="admin__tab hidden" data-tab="details" role="tab" id="tabDetails">Details</button>
@@ -26,7 +27,8 @@
     <section id="panelLicenses" class="admin__panel is-active" role="tabpanel">
       <div class="panel__toolbar">
         <form id="licensesFilterForm" class="panel__search">
-          <input type="text" id="licensesLicenseKey" placeholder="License key (exact match)" autocomplete="off" />
+          <input type="text" id="licensesLicenseKey" placeholder="Bloot ID / license key (exact)" autocomplete="off" />
+          <input type="email" id="licensesEmail" placeholder="Email (exact)" autocomplete="off" />
           <select id="licensesStatus">
             <option value="">All statuses</option>
             <option value="valid">Valid</option>
@@ -37,6 +39,7 @@
             <option value="">All plans</option>
             <option value="lifetime">Lifetime</option>
             <option value="yearly">Yearly</option>
+            <option value="trial">Trial</option>
           </select>
           <select id="licensesExpirationWindow">
             <option value="">Any expiration</option>
@@ -57,6 +60,7 @@
           <thead>
             <tr>
               <th>Key</th>
+              <th>Email</th>
               <th>Plan</th>
               <th>Expires</th>
               <th>Devices</th>
@@ -64,7 +68,7 @@
               <th>Actions</th>
             </tr>
           </thead>
-          <tbody id="licensesTableBody"><tr><td colspan="6" class="table-empty">Use filters to find specific licenses.<br>No data is loaded until you run a search.</td></tr></tbody>
+          <tbody id="licensesTableBody"><tr><td colspan="7" class="table-empty">Use filters to find specific licenses.<br>No data is loaded until you run a search.</td></tr></tbody>
         </table>
       </div>
       <div class="panel__pagination">
@@ -73,6 +77,40 @@
         <button type="button" id="licensesNext" class="btn btn--secondary">Next</button>
       </div>
       <p id="licensesStatusMsg" class="status"></p>
+    </section>
+
+    <!-- Tab: Registered users (Bloot website / D1) -->
+    <section id="panelUsers" class="admin__panel" role="tabpanel">
+      <p class="admin__lead">Accounts created on bloot.app (stored in the Worker database).</p>
+      <form id="usersFilterForm" class="panel__search panel__search--tight">
+        <input type="text" id="usersUserId" placeholder="Bloot ID (exact)" autocomplete="off" spellcheck="false" />
+        <input type="text" id="usersEmail" placeholder="Email (contains)" autocomplete="off" />
+        <button type="submit" id="usersLoad" class="btn btn--primary">Load</button>
+      </form>
+      <div class="table-wrap">
+        <table class="admin__table">
+          <thead>
+            <tr>
+              <th>Registered</th>
+              <th>Email</th>
+              <th>Name</th>
+              <th>Username</th>
+              <th>Bloot ID</th>
+              <th>License</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="usersTableBody">
+            <tr><td colspan="7" class="table-empty">Open this tab or click <strong>Load</strong> to list users.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="panel__pagination">
+        <span id="usersPaginationInfo"></span>
+        <button type="button" id="usersPrev" class="btn btn--secondary" disabled>Prev</button>
+        <button type="button" id="usersNext" class="btn btn--secondary">Next</button>
+      </div>
+      <p id="usersStatusMsg" class="status"></p>
     </section>
 
     <!-- Tab: Create License -->
@@ -91,7 +129,7 @@
         </div>
         <div class="form-row">
           <label for="createDeviceLimit">Device limit</label>
-          <input type="number" id="createDeviceLimit" value="3" min="1" max="99" />
+          <input type="number" id="createDeviceLimit" value="1" min="1" max="1" disabled />
         </div>
         <button type="submit" id="btnCreate" class="btn btn--primary">Generate license</button>
       </form>
@@ -169,9 +207,16 @@
           <span id="detailsStatus" class="badge"></span>
         </div>
         <div class="details__info">
+          <div class="details__row"><span class="details__label">Email</span><span id="detailsEmail">—</span></div>
           <div class="details__row"><span class="details__label">Plan</span><span id="detailsPlan"></span></div>
           <div class="details__row"><span class="details__label">Expires</span><span id="detailsExpires"></span></div>
           <div class="details__row"><span class="details__label">Devices</span><span id="detailsDevices"></span></div>
+        </div>
+        <div class="details__extend panel__toolbar">
+          <span class="admin__hint">Extend access (adds to current or remaining time from now):</span>
+          <button type="button" class="btn btn--secondary btn--small" id="extend1m">+1 month</button>
+          <button type="button" class="btn btn--secondary btn--small" id="extend6m">+6 months</button>
+          <button type="button" class="btn btn--secondary btn--small" id="extend12m">+12 months</button>
         </div>
         <div class="details__actions">
           <button type="button" id="detailsEdit" class="btn btn--secondary">Edit</button>
@@ -238,6 +283,7 @@
       </div>
       <div class="panel__actions">
         <button type="button" id="btnSaveConfig" class="btn btn--primary">Save config</button>
+        <button type="button" id="btnCopySecret" class="btn btn--secondary">Copy secret</button>
         <button type="button" id="btnResetConfig" class="btn btn--secondary">Reset</button>
       </div>
       <p id="configStatus" class="status"></p>
@@ -256,6 +302,7 @@
           <select id="editPlanType">
             <option value="lifetime">Lifetime</option>
             <option value="yearly">Yearly</option>
+            <option value="trial">Trial</option>
           </select>
         </div>
         <div class="form-row" id="editDurationRow">
@@ -264,7 +311,7 @@
         </div>
         <div class="form-row">
           <label for="editDeviceLimit">Device limit</label>
-          <input type="number" id="editDeviceLimit" value="3" min="1" max="99" />
+          <input type="number" id="editDeviceLimit" value="1" min="1" max="1" disabled />
         </div>
         <div class="modal__actions">
           <button type="button" id="editCancel" class="btn btn--secondary">Cancel</button>

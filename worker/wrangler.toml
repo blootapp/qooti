@@ -1,6 +1,7 @@
 name = "qooti-license"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
 
 # D1 database (your existing "qooti" database)
 [[d1_databases]]
@@ -11,3 +12,6 @@ migrations_dir = "migrations"
 
 # Admin secret – set via: npx wrangler secret put ADMIN_SECRET
 # (or in dashboard: Worker → Settings → Variables and Secrets)
+#
+# Internal secret for website → Worker POST /bloot/internal/register:
+#   npx wrangler secret put INTERNAL_SECRET

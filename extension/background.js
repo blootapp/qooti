@@ -12,6 +12,21 @@ const STORAGE_KEYS = {
   LAST_EXTENSION_ERROR_TIME: "lastExtensionErrorTime",
 };
 
+function normalizeDesktopUrl(raw) {
+  const fallback = DEFAULT_DESKTOP_URL;
+  const input = String(raw || fallback).trim() || fallback;
+  try {
+    const u = new URL(input);
+    const host = (u.hostname || "").toLowerCase();
+    const isLoopback = host === "127.0.0.1" || host === "localhost";
+    if (!isLoopback) return fallback;
+    if (u.protocol !== "http:" && u.protocol !== "https:") return fallback;
+    return `${u.protocol}//${u.host}`;
+  } catch (_) {
+    return fallback;
+  }
+}
+
 // --- Context menu setup (run once on install / startup)
 function setupContextMenus() {
   chrome.contextMenus.removeAll(() => {
@@ -49,7 +64,7 @@ chrome.runtime.onStartup.addListener(() => {
 // --- Desktop app communication (local HTTP)
 async function getDesktopUrl() {
   const o = await chrome.storage.local.get(STORAGE_KEYS.DESKTOP_URL);
-  return (o[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL).replace(/\/+$/, "");
+  return normalizeDesktopUrl(o[STORAGE_KEYS.DESKTOP_URL] || DEFAULT_DESKTOP_URL).replace(/\/+$/, "");
 }
 
 async function getConnectionKey() {
