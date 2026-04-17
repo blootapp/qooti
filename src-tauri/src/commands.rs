@@ -3404,6 +3404,31 @@ const MAX_OFFLINE_CACHE_GRACE_SECONDS: i64 = 72 * 60 * 60;
 const LICENSE_CACHE_ID: i32 = 1;
 const DEVICE_ID_PREF_KEY: &str = "device_id";
 
+/// Short prefix for logs (never log full Bloot IDs).
+fn license_key_hint_for_terminal(key: &str) -> String {
+    let t = key.trim();
+    if t.is_empty() {
+        return "(empty)".to_string();
+    }
+    let head: String = t.chars().take(10).collect();
+    if t.len() > 10 {
+        format!("{}… len={}", head, t.len())
+    } else {
+        format!("{} len={}", head, t.len())
+    }
+}
+
+/// Serializes license HTTP work so startup `check_current_license_with_server` cannot race with
+/// `validate_license` and overwrite a fresh activation with a stale in-flight status response.
+static LICENSE_RPC_MUTEX: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn license_rpc_guard() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    LICENSE_RPC_MUTEX
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "License RPC mutex poisoned.".to_string())
+}
+
 fn get_device_fingerprint(db: &Db) -> Result<String, String> {
     let conn = db.conn();
     let existing: Option<String> = conn
@@ -3480,7 +3505,7 @@ fn is_bloot_user_id(input: &str) -> bool {
 
 fn normalize_license_status(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
-        "valid" => "valid".to_string(),
+        "valid" | "ok" | "success" | "active" => "valid".to_string(),
         "revoked" => "revoked".to_string(),
         "expired" | "expired_or_revoked" => "expired".to_string(),
         "device_limit" | "device_blocked" | "over_limit" | "at_limit" => "device_limit".to_string(),
@@ -3633,19 +3658,57 @@ fn update_cached_license_validation_state(
     Ok(())
 }
 
+/// Narrow phrases only — never match bare "limit" (false positive on "unlimited", "no limit", etc.)
+fn message_implies_device_limit(msg: &str) -> bool {
+    let m = msg.to_ascii_lowercase();
+    [
+        "device limit",
+        "device_limit",
+        "device limit reached",
+        "too many devices",
+        "maximum devices",
+        "max devices",
+        "at_limit",
+        "over_limit",
+    ]
+    .iter()
+    .any(|needle| m.contains(needle))
+}
+
 fn infer_license_status(
     http_status: reqwest::StatusCode,
     json: &serde_json::Value,
 ) -> String {
+    // 1) Authoritative: explicit `valid` must win over `status` text (avoids stale status after admin reset)
+    if let Some(true) = json["valid"].as_bool() {
+        return "valid".to_string();
+    }
+    if let Some(s) = json["valid"].as_str() {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" => return "valid".to_string(),
+            _ => {}
+        }
+    }
+
+    if http_status == reqwest::StatusCode::NOT_FOUND {
+        return "not_found".to_string();
+    }
+    if matches!(
+        http_status,
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return "invalid".to_string();
+    }
+
+    // 2) Normalized status field (failure reasons, or success aliases like "success")
     if let Some(status) = json["status"].as_str() {
         let normalized = normalize_license_status(status);
         if normalized != "invalid" || status.eq_ignore_ascii_case("invalid") {
             return normalized;
         }
     }
-    if json["valid"].as_bool() == Some(true) {
-        return "valid".to_string();
-    }
+
+    // 3) Failure messages — tight heuristics (no substring "limit" alone)
     let msg = json["error"]
         .as_str()
         .or_else(|| json["message"].as_str())
@@ -3654,7 +3717,7 @@ fn infer_license_status(
     if msg.contains("revok") {
         return "revoked".to_string();
     }
-    if msg.contains("device") || msg.contains("limit") {
+    if message_implies_device_limit(&msg) {
         return "device_limit".to_string();
     }
     if msg.contains("expir") {
@@ -3663,16 +3726,10 @@ fn infer_license_status(
     if msg.contains("inactive") {
         return "inactive".to_string();
     }
-    if msg.contains("not found") || http_status == reqwest::StatusCode::NOT_FOUND {
+    if msg.contains("not found") {
         return "not_found".to_string();
     }
     if json["valid"].as_bool() == Some(false) && http_status.is_success() {
-        return "invalid".to_string();
-    }
-    if matches!(
-        http_status,
-        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
-    ) {
         return "invalid".to_string();
     }
     "invalid".to_string()
@@ -3886,6 +3943,19 @@ fn request_license_server_check(
             format!("Network error: {}", e)
         })?;
     let parsed = parse_license_server_response(http_status, json.clone());
+    if activation {
+        eprintln!(
+            "[qooti][activation][terminal] HTTP {} POST …/license/validate → parsed: valid={} status={} plan={:?} err={:?}",
+            http_status.as_u16(),
+            parsed.valid,
+            parsed.status,
+            parsed.plan_type.as_deref(),
+            parsed
+                .error
+                .as_deref()
+                .map(|s| s.chars().take(100).collect::<String>())
+        );
+    }
     verify_license_server_signature(
         &json,
         &parsed.status,
@@ -3906,16 +3976,20 @@ pub fn get_license_cache(db: State<Arc<Db>>) -> Result<LicenseCacheResult, Strin
     Ok(build_license_cache_result(row.as_ref()))
 }
 
-#[tauri::command]
-pub fn clear_license_cache(db: State<Arc<Db>>) -> Result<(), String> {
-    cmd_log!("clear_license_cache");
-    let conn = db.conn();
+fn clear_license_cache_conn(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute(
         "DELETE FROM license_cache WHERE id = ?",
         rusqlite::params![LICENSE_CACHE_ID],
     )
     .map_err(|e: rusqlite::Error| e.to_string())?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn clear_license_cache(db: State<Arc<Db>>) -> Result<(), String> {
+    cmd_log!("clear_license_cache");
+    let conn = db.conn();
+    clear_license_cache_conn(&conn)
 }
 
 fn parse_expires_at(v: &serde_json::Value) -> Option<i64> {
@@ -3950,9 +4024,21 @@ pub fn validate_license(
     license_key: String,
 ) -> Result<ValidateLicenseResult, String> {
     cmd_log!("validate_license");
+    info!(
+        "[activation] command called — validate_license entered (must appear on every Activate click; no cache read before server)"
+    );
+    let _license_rpc_sync = license_rpc_guard()?;
     info!("[license] validate_license: start");
     let key_trim = license_key.trim();
+    eprintln!(
+        "[qooti][activation][terminal] validate_license invoked | key_hint={}",
+        license_key_hint_for_terminal(key_trim)
+    );
+    eprintln!(
+        "[qooti][activation][terminal] Note: Frontend `console.info` only appears in WebView DevTools (Ctrl+Shift+I / Cmd+Option+I), not in this terminal."
+    );
     if key_trim.is_empty() {
+        eprintln!("[qooti][activation][terminal] abort: empty key");
         return Ok(ValidateLicenseResult {
             success: false,
             plan_type: None,
@@ -3963,6 +4049,7 @@ pub fn validate_license(
         });
     }
     if !is_bloot_user_id(key_trim) {
+        eprintln!("[qooti][activation][terminal] abort: not a Bloot User ID format");
         return Ok(ValidateLicenseResult {
             success: false,
             plan_type: None,
@@ -3974,6 +4061,7 @@ pub fn validate_license(
     }
     let api_base = configured_license_api_base();
     if api_base.is_empty() {
+        eprintln!("[qooti][activation][terminal] abort: license API base not configured");
         return Ok(ValidateLicenseResult {
             success: false,
             plan_type: None,
@@ -3987,10 +4075,25 @@ pub fn validate_license(
         "[license] validate_license: sending POST to {}/license/validate",
         api_base
     );
+    {
+        let conn = db.conn();
+        let _ = clear_license_cache_conn(&conn);
+        info!("[license] validate_license: cleared license cache before live activation attempt");
+        eprintln!("[qooti][activation][terminal] cleared local license_cache row before POST");
+    }
     let device_id = get_device_fingerprint(&db)?;
+    eprintln!(
+        "[qooti][activation][terminal] POST {} …/license/validate (device_fp len={})",
+        api_base,
+        device_id.len()
+    );
     let server_check = match request_license_server_check(&api_base, key_trim, &device_id, true) {
         Ok(result) => result,
         Err(error) => {
+            eprintln!(
+                "[qooti][activation][terminal] request_license_server_check ERROR: {}",
+                error
+            );
             info!("[license] validate_license: request failed: {}", error);
             return Ok(ValidateLicenseResult {
                 success: false,
@@ -4002,8 +4105,13 @@ pub fn validate_license(
             });
         }
     };
+    eprintln!(
+        "[qooti][activation][terminal] outcome: valid={} status={} plan={:?}",
+        server_check.valid, server_check.status, server_check.plan_type
+    );
     if server_check.valid {
         let Some(expires) = server_check.expires_at else {
+            eprintln!("[qooti][activation][terminal] reject: valid but missing expires_at");
             return Ok(ValidateLicenseResult {
                 success: false,
                 plan_type: None,
@@ -4053,6 +4161,7 @@ fn license_endpoint_for_log(base: &str) -> String {
 }
 
 fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheResult, String> {
+    let _license_rpc_sync = license_rpc_guard()?;
     let t0 = std::time::Instant::now();
     let row = {
         let conn = db.conn();
@@ -4151,35 +4260,55 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
             });
         }
     };
+    if !server_check.valid {
+        let conn = db.conn();
+        let _ = update_cached_license_validation_state(
+            &conn,
+            server_check.status.as_str(),
+            server_check.error.as_deref(),
+        );
+        info!(
+            "[license] result | valid=false | status={} | reason=server_rejected | duration={}ms",
+            server_check.status,
+            t0.elapsed().as_millis()
+        );
+        return Ok(LicenseCacheResult {
+            valid: false,
+            plan_type: Some(row.plan_type),
+            expires_at: Some(row.expires_at),
+            activated_at: row.activated_at,
+            has_cached_key: true,
+            used_cached: false,
+            status: Some(server_check.status),
+            error: server_check.error,
+            last_validated_at: Some(now_unix_ts()),
+        });
+    }
     let plan_type = server_check
         .plan_type
         .clone()
         .unwrap_or_else(|| row.plan_type.clone());
-    let expires_at = if server_check.valid {
-        match server_check.expires_at {
-            Some(v) => v,
-            None => {
-                let conn = db.conn();
-                let _ = update_cached_license_validation_state(
-                    &conn,
-                    "invalid",
-                    Some("License response missing expiry timestamp."),
-                );
-                return Ok(LicenseCacheResult {
-                    valid: false,
-                    plan_type: Some(row.plan_type),
-                    expires_at: Some(row.expires_at),
-                    activated_at: row.activated_at,
-                    has_cached_key: true,
-                    used_cached: false,
-                    status: Some("invalid".to_string()),
-                    error: Some("License response missing expiry timestamp.".to_string()),
-                    last_validated_at: Some(now_unix_ts()),
-                });
-            }
+    let expires_at = match server_check.expires_at {
+        Some(v) => v,
+        None => {
+            let conn = db.conn();
+            let _ = update_cached_license_validation_state(
+                &conn,
+                "invalid",
+                Some("License response missing expiry timestamp."),
+            );
+            return Ok(LicenseCacheResult {
+                valid: false,
+                plan_type: Some(row.plan_type),
+                expires_at: Some(row.expires_at),
+                activated_at: row.activated_at,
+                has_cached_key: true,
+                used_cached: false,
+                status: Some("invalid".to_string()),
+                error: Some("License response missing expiry timestamp.".to_string()),
+                last_validated_at: Some(now_unix_ts()),
+            });
         }
-    } else {
-        server_check.expires_at.unwrap_or(row.expires_at)
     };
     let conn = db.conn();
     let _ = set_license_cache_impl(
@@ -4187,33 +4316,30 @@ fn check_current_license_with_server_impl(db: &Arc<Db>) -> Result<LicenseCacheRe
         &row.license_key,
         &plan_type,
         expires_at,
-        server_check.status.as_str(),
-        server_check.error.as_deref(),
+        "valid",
+        None,
     );
-    if server_check.valid {
-        let _ = sync_profile_name_from_bloot_server(&conn, server_check.username.clone());
-    }
+    let _ = sync_profile_name_from_bloot_server(&conn, server_check.username.clone());
     let days_remaining = expires_at
         .checked_sub(now_unix_ts())
         .map(|d| d / 86400)
         .unwrap_or(0);
     info!(
-        "[license] result | valid={} | plan={} | status={} | days_remaining={} | duration={}ms",
-        server_check.valid,
+        "[license] result | valid=true | plan={} | status={} | days_remaining={} | duration={}ms",
         plan_type,
         server_check.status,
         days_remaining,
         t0.elapsed().as_millis()
     );
     Ok(LicenseCacheResult {
-        valid: server_check.valid,
+        valid: true,
         plan_type: Some(plan_type),
         expires_at: Some(expires_at),
         activated_at: row.activated_at,
         has_cached_key: true,
         used_cached: false,
         status: Some(server_check.status),
-        error: server_check.error,
+        error: None,
         last_validated_at: Some(now_unix_ts()),
     })
 }

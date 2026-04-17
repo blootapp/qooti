@@ -83,6 +83,31 @@ function deriveBaseUrl(url) {
   }
 }
 
+/** Safe preview of a Bloot ID for logs (never log full key). */
+function licenseKeyHint(key) {
+  const s = String(key || "").trim();
+  if (!s) return "(empty)";
+  const head = s.slice(0, Math.min(10, s.length));
+  return s.length > 10 ? `${head}… (len=${s.length})` : `${head} (len=${s.length})`;
+}
+
+function summarizeValidateLicenseResult(res) {
+  if (res == null || typeof res !== "object") {
+    return { ok: false, note: "unexpected response shape", raw: typeof res };
+  }
+  return {
+    success: !!res.success,
+    status: res.status != null ? String(res.status) : null,
+    usedCached: !!res.used_cached,
+    planType: res.plan_type != null ? String(res.plan_type) : null,
+    expiresAt: res.expires_at != null ? res.expires_at : null,
+    errorSnippet:
+      res.error != null && String(res.error).trim() !== ""
+        ? String(res.error).slice(0, 160)
+        : null,
+  };
+}
+
 function debugInvoke(cmd, args, fn) {
   const invokeFn = fn || (() => window.__TAURI__?.core?.invoke?.(cmd, args));
   const quiet = QUIET_INVOKES.has(cmd);
@@ -724,7 +749,54 @@ export function setupTauriApi() {
     setLaunchAtLoginEnabled: (enabled) =>
       safeInvoke("set_launch_at_login_enabled", { enabled: !!enabled }),
     getLicenseCache: () => safeInvoke("get_license_cache", {}),
-    validateLicense: (licenseKey) => safeInvoke("validate_license", { licenseKey: String(licenseKey || "").trim() }),
+    validateLicense: async (licenseKey) => {
+      const k = String(licenseKey || "").trim();
+      const t0 = typeof performance !== "undefined" ? performance.now() : Date.now();
+      console.info("[qooti][license][activation] ─── Activate: start ───", {
+        keyHint: licenseKeyHint(k),
+        step: "user_submitted",
+      });
+      try {
+        await invoke("clear_license_cache", {});
+        console.info("[qooti][license][activation] step: clear_license_cache", {
+          ok: true,
+          ms: Math.round(
+            (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0
+          ),
+        });
+      } catch (clearErr) {
+        console.warn("[qooti][license][activation] step: clear_license_cache", {
+          ok: false,
+          message: clearErr?.message || String(clearErr),
+        });
+      }
+      try {
+        const result = await safeInvoke("validate_license", { licenseKey: k });
+        const elapsed =
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0;
+        const summary = summarizeValidateLicenseResult(result);
+        if (summary.success) {
+          console.info("[qooti][license][activation] ─── Activate: success ───", {
+            ...summary,
+            durationMs: Math.round(elapsed),
+          });
+        } else {
+          console.warn("[qooti][license][activation] ─── Activate: rejected ───", {
+            ...summary,
+            durationMs: Math.round(elapsed),
+          });
+        }
+        return result;
+      } catch (err) {
+        const elapsed =
+          (typeof performance !== "undefined" ? performance.now() : Date.now()) - t0;
+        console.error("[qooti][license][activation] ─── Activate: invoke error ───", {
+          durationMs: Math.round(elapsed),
+          message: err?.message || String(err),
+        });
+        throw err;
+      }
+    },
     checkCurrentLicenseWithServer: () => safeInvoke("check_current_license_with_server", {}),
     refreshLicenseStatus: () => safeInvoke("refresh_license_status", {}),
     clearLicenseCache: () => safeInvoke("clear_license_cache", {}),
@@ -807,7 +879,7 @@ export function setupTauriApi() {
     copyTextToClipboard: (text) => safeInvoke("copy_text_to_clipboard", { text: String(text || "") }),
     async resolveOcrAssets() {
       const pageHref = typeof location !== "undefined" ? location.href : "";
-      const webBase = pageHref ? new URL("/assets/ocr/", pageHref).toString() : "/assets/ocr/";
+      const webBase = pageHref ? new URL("./assets/ocr/", pageHref).toString() : "./assets/ocr/";
       const REQUIRED_OCR_KEYS = [
         "workerUrl",
         "ortScriptUrl",

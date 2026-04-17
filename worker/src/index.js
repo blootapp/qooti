@@ -537,56 +537,36 @@ async function validateLicense(request, env) {
     countRow = { c: 0 };
   }
   const limit = row.device_limit || 1;
-  const count = countRow?.c ?? 0;
+  let count = countRow?.c ?? 0;
 
+  // `license_devices` is canonical. If it has no rows, legacy `licenses.active_devices` JSON
+  // must not enforce limits — it often stays stale after admin "reset devices" (rows deleted,
+  // JSON not cleared), which incorrectly returned "Device limit reached".
   if (count === 0) {
     try {
-      const oldRow = await env.DB.prepare(
-        "SELECT active_devices FROM licenses WHERE license_key = ?"
+      await env.DB.prepare(
+        "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
       )
         .bind(licenseKey)
-        .first();
-      if (oldRow?.active_devices) {
-        let arr = [];
-        try {
-          arr = JSON.parse(oldRow.active_devices || "[]");
-        } catch (_) {}
-        if (arr.includes(deviceFingerprint)) {
-          await env.DB.prepare(
-            "INSERT OR REPLACE INTO license_devices (license_key, device_fingerprint, first_seen, last_seen) VALUES (?, ?, ?, ?)"
-          )
-            .bind(licenseKey, deviceFingerprint, now, now)
-            .run();
-          await recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, row.plan_type, now);
-          const payload = await signLicensePayload(
-            env,
-            licenseValidateSuccessPayload(row, blootUsername),
-            "activate"
-          );
-          return json(payload);
-        }
-        if (arr.length >= limit) {
-          return json({ valid: false, error: "Device limit reached" }, 200);
-        }
-        arr.push(deviceFingerprint);
-        await env.DB.prepare(
-          "UPDATE licenses SET active_devices = ? WHERE license_key = ?"
-        )
-          .bind(JSON.stringify(arr), licenseKey)
-          .run();
-        await env.DB.prepare(
-          "INSERT OR REPLACE INTO license_devices (license_key, device_fingerprint, first_seen, last_seen) VALUES (?, ?, ?, ?)"
-        )
-          .bind(licenseKey, deviceFingerprint, now, now)
-          .run();
-        await recordTrialDeviceClaim(env, licenseKey, deviceFingerprint, row.plan_type, now);
-        const payload = await signLicensePayload(
-          env,
-          licenseValidateSuccessPayload(row, blootUsername),
-          "activate"
-        );
-        return json(payload);
-      }
+        .run();
+    } catch (_) {}
+  }
+
+  // Single-seat licenses: the slot may hold a *different* fingerprint (reinstall, cleared prefs,
+  // new local device_id). Replace that row instead of hard-failing "Device limit reached".
+  if (limit === 1 && count >= 1) {
+    try {
+      await env.DB.prepare(
+        "DELETE FROM license_devices WHERE license_key = ?"
+      )
+        .bind(licenseKey)
+        .run();
+      await env.DB.prepare(
+        "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
+      )
+        .bind(licenseKey)
+        .run();
+      count = 0;
     } catch (_) {}
   }
 
@@ -1117,8 +1097,16 @@ async function deleteLicense(licenseKey, env) {
 }
 
 async function resetDevices(licenseKey, env) {
-  const r = await env.DB.prepare(
+  await env.DB.prepare(
     "DELETE FROM license_devices WHERE license_key = ?"
+  )
+    .bind(licenseKey)
+    .run();
+
+  // Must clear legacy JSON too: validateLicense() falls back to `licenses.active_devices`
+  // when license_devices is empty; stale entries here caused "Device limit reached" after reset.
+  await env.DB.prepare(
+    "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
   )
     .bind(licenseKey)
     .run();
@@ -1142,6 +1130,19 @@ async function revokeDevice(licenseKey, request, env) {
   )
     .bind(licenseKey, fp)
     .run();
+
+  const remaining = await env.DB.prepare(
+    "SELECT COUNT(*) as c FROM license_devices WHERE license_key = ?"
+  )
+    .bind(licenseKey)
+    .first();
+  if ((remaining?.c ?? 0) === 0) {
+    await env.DB.prepare(
+      "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
+    )
+      .bind(licenseKey)
+      .run();
+  }
 
   await logAction(env, "device_revoked", licenseKey, fp.slice(0, 8) + "…");
   return json({ ok: true });

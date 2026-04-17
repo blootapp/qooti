@@ -376,15 +376,15 @@ let notificationLastFetchedId = "";
 let notificationHasBeenViewed = false;
 let notificationLastUnreadCount = 0;
 
-const NOTIFICATION_ICON_BELL = "/assets/icons/remix/bell.svg";
-const NOTIFICATION_ICON_BELL_DOT = "/assets/icons/remix/bell-dot.svg";
-const NOTIFICATION_STATE_ICON_INFO = "/assets/icons/remix/bell.svg";
-const NOTIFICATION_STATE_ICON_SUCCESS = "/assets/icons/remix/checkbox-circle-line.svg";
-const NOTIFICATION_STATE_ICON_ERROR = "/assets/icons/remix/close-line.svg";
+const NOTIFICATION_ICON_BELL = "./assets/icons/remix/bell.svg";
+const NOTIFICATION_ICON_BELL_DOT = "./assets/icons/remix/bell-dot.svg";
+const NOTIFICATION_STATE_ICON_INFO = "./assets/icons/remix/bell.svg";
+const NOTIFICATION_STATE_ICON_SUCCESS = "./assets/icons/remix/checkbox-circle-line.svg";
+const NOTIFICATION_STATE_ICON_ERROR = "./assets/icons/remix/close-line.svg";
 const NOTIFICATION_CACHE_KEY = "qooti.notifications.cache.v1";
 const NOTIFICATION_READ_KEY = "qooti.notifications.read.v1";
 const NOTIFICATION_LAST_ID_KEY = "qooti.notifications.lastId.v1";
-const TUTORIAL_VIDEOS_CONFIG_PATH = "/assets/tutorial-videos.json";
+const TUTORIAL_VIDEOS_CONFIG_PATH = "./assets/tutorial-videos.json";
 let tutorialVideosConfigPromise = null;
 const OCR_INDEX_CONCURRENCY = 1;
 const OCR_INDEX_CLAIM_BATCH = 2;
@@ -556,8 +556,8 @@ let ocrAssetConfigPromise = null;
 
 function getOcrAssetBase() {
   return typeof window !== "undefined" && window.location?.href
-    ? new URL("/assets/ocr/", window.location.href).toString()
-    : "/assets/ocr/";
+    ? new URL("./assets/ocr/", window.location.href).toString()
+    : "./assets/ocr/";
 }
 
 async function getOcrAssetConfig() {
@@ -2374,11 +2374,11 @@ const SURVEY_ROLE_TO_TAGS = {
 
 /** Option label → SVG for “How did you discover Qooti?” (single-select only). */
 const SURVEY_DISCOVERY_BRAND_ICONS = {
-  Telegram: "/assets/socialmedia/telegram.svg",
-  Instagram: "/assets/socialmedia/instagram.svg",
-  YouTube: "/assets/socialmedia/youtube.svg",
-  "Friend / colleague": "/assets/socialmedia/users-alt.svg",
-  Other: "/assets/socialmedia/circle-ellipsis.svg",
+  Telegram: "./assets/socialmedia/telegram.svg",
+  Instagram: "./assets/socialmedia/instagram.svg",
+  YouTube: "./assets/socialmedia/youtube.svg",
+  "Friend / colleague": "./assets/socialmedia/users-alt.svg",
+  Other: "./assets/socialmedia/circle-ellipsis.svg",
 };
 
 function showSurveyView() {
@@ -3385,7 +3385,7 @@ function sourceType(it) {
 }
 
 function remixIcon(name, className = "ui-icon ui-icon--sm") {
-  return `<span class="${className}" style="--icon-url:url('/assets/icons/remix/${name}')" aria-hidden="true"></span>`;
+  return `<span class="${className}" style="--icon-url:url('./assets/icons/remix/${name}')" aria-hidden="true"></span>`;
 }
 
 function getMediaPreviewPathToCopy(it) {
@@ -4162,7 +4162,7 @@ async function showFindSimilarModal(item) {
     <div class="app-modal__backdrop"></div>
     <div class="app-modal__dialog app-modal__dialog--wide">
       <div class="app-modal__header">
-        <h3 class="app-modal__title"><span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/bard-fill.svg');vertical-align:middle;margin-right:6px" aria-hidden="true"></span>Find related</h3>
+        <h3 class="app-modal__title"><span class="ui-icon ui-icon--sm" style="--icon-url:url('./assets/icons/remix/bard-fill.svg');vertical-align:middle;margin-right:6px" aria-hidden="true"></span>Find related</h3>
         <button type="button" class="app-modal__close" aria-label="Close">&times;</button>
       </div>
       <div class="app-modal__body">
@@ -8859,10 +8859,10 @@ function updateMediaPreviewVolumeIcon(btn, level, isMuted) {
   const safeLevel = Math.max(0, Math.min(1, Number(level) || 0));
   const iconUrl =
     isMuted || safeLevel <= 0.0001
-      ? "url('/assets/icons/player/volume-mute-fill.svg')"
+      ? "url('./assets/icons/player/volume-mute-fill.svg')"
       : safeLevel <= 0.5
-        ? "url('/assets/icons/player/volume-down-fill.svg')"
-        : "url('/assets/icons/player/volume-up-line.svg')";
+        ? "url('./assets/icons/player/volume-down-fill.svg')"
+        : "url('./assets/icons/player/volume-up-line.svg')";
   setMediaPreviewButtonIcon(btn, iconUrl);
 }
 
@@ -8936,8 +8936,8 @@ function wireVideoInspector(video, _item) {
   overlay.classList.remove("hidden");
   setMediaPreviewDimensions(video.videoWidth, video.videoHeight);
 
-  const playIcon = "url('/assets/icons/player/play-icon.svg')";
-  const pauseIcon = "url('/assets/icons/player/pause-icon.svg')";
+  const playIcon = "url('./assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('./assets/icons/player/pause-icon.svg')";
   const setTimelineReady = (ready) => {
     if (!timelineWrap) return;
     timelineWrap.style.pointerEvents = ready ? "auto" : "none";
@@ -9185,8 +9185,8 @@ function wireYouTubeInspector(player) {
   overlay.classList.remove("hidden");
   setMediaPreviewDimensions(16, 9);
 
-  const playIcon = "url('/assets/icons/player/play-icon.svg')";
-  const pauseIcon = "url('/assets/icons/player/pause-icon.svg')";
+  const playIcon = "url('./assets/icons/player/play-icon.svg')";
+  const pauseIcon = "url('./assets/icons/player/pause-icon.svg')";
   const setTimelineReady = (ready) => {
     if (!timelineWrap) return;
     timelineWrap.style.pointerEvents = ready ? "auto" : "none";
@@ -10255,7 +10255,7 @@ function buildNotionImportBodyHTML() {
   return `
     <div class="header-row">
       <div class="notion-icon migration-modal-ref__icon">
-        <span class="ui-icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+        <span class="ui-icon" style="--icon-url:url('./assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
       </div>
       <div>
         <div class="header-title">Import from Notion Export</div>
@@ -10344,7 +10344,7 @@ function buildNotionProgressHTML(statusText, current, total, percent, isModal = 
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('./assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">${escapeHtml(heading)}</div>
@@ -10432,7 +10432,7 @@ function buildNotionCountConfirmHTML(total, pageTitle) {
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('./assets/icons/remix/notion-fill.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">Ready to import</div>
@@ -10554,7 +10554,7 @@ function buildNotionSummaryHTML(imported, failed, skippedDuplicates, collectionN
       <div class="notion-progress-window__hero-card">
         <div class="notion-progress-window__hero">
           <div class="notion-progress-window__icon-wrap">
-            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('/assets/icons/remix/checkbox-circle-line.svg')" aria-hidden="true"></span>
+            <span class="ui-icon notion-progress-window__icon" style="--icon-url:url('./assets/icons/remix/checkbox-circle-line.svg')" aria-hidden="true"></span>
           </div>
           <div>
             <div class="notion-progress-window__hero-title">Done</div>
@@ -11341,7 +11341,7 @@ function wireEvents() {
     const emptyEl = $("#collectionsDropdownEmpty");
     if (!wrap || !dropdown || !listEl || !emptyEl) return;
     let openedByClick = false;
-    const folderIconUrl = "url('/assets/icons/remix/folder-line.svg')";
+    const folderIconUrl = "url('./assets/icons/remix/folder-line.svg')";
     function renderCollectionsList() {
       const list = (state.collections || []).filter((c) => c.visible_on_home !== false);
       listEl.innerHTML = "";
@@ -11752,7 +11752,7 @@ function wireEvents() {
       addBtn.className = "color-picker-recent__add";
       addBtn.setAttribute("aria-label", "Save current color to recent");
       addBtn.title = "Save current color";
-      addBtn.innerHTML = `<span class="ui-icon ui-icon--sm" style="--icon-url:url('/assets/icons/remix/add-line.svg')" aria-hidden="true"></span>`;
+      addBtn.innerHTML = `<span class="ui-icon ui-icon--sm" style="--icon-url:url('./assets/icons/remix/add-line.svg')" aria-hidden="true"></span>`;
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         pushRecentColor(currentHex());
@@ -12890,11 +12890,17 @@ async function ensureActivationConnectivityBeforeSubmit() {
   const btn = $("#licenseActivateBtn");
   const textEl = btn?.querySelector(".license-form__submit-text");
   const lang = getCurrentUiLang();
+  licenseLog("activation: checking internet before submit", {});
   if (btn && !isLicenseLockedNow()) {
     btn.disabled = true;
     if (textEl) textEl.textContent = t("activation.connecting", lang);
   }
+  const t0 = performance.now();
   const connected = await isActivationInternetConnected();
+  licenseLog("activation: connectivity probe done", {
+    connected,
+    durationMs: Math.round(performance.now() - t0),
+  });
   if (!connected) {
     showLicenseActivationOfflineGate();
   } else {
@@ -13028,6 +13034,23 @@ function clearLicenseLockoutState() {
   updateLicenseActivateButtonLockoutUi();
 }
 
+/** Only escalate lockout for user-input mistakes — not device limit, network, or account state the user cannot fix by waiting. */
+function shouldApplyLicenseActivationPenalty(result) {
+  const status = String(result?.status || "").toLowerCase();
+  const noPenalty = new Set([
+    "device_limit",
+    "device_blocked",
+    "network_error",
+    "offline_cache",
+    "revoked",
+    "expired",
+    "inactive",
+    "not_found",
+  ]);
+  if (noPenalty.has(status)) return false;
+  return true;
+}
+
 async function startLicensedSession() {
   const appEl = document.getElementById("app");
   appEl?.classList.remove("app--unlicensed");
@@ -13085,6 +13108,10 @@ async function checkStoredLicenseAccess({ showGateError = true } = {}) {
     setText(bootStatusEl, t("boot.checkingLicense", lang));
     // Backend license check now returns quickly on network issues; keep a modest UI guard.
     const LICENSE_STARTUP_TIMEOUT_MS = 9000;
+    licenseLog("startup: calling checkCurrentLicenseWithServer", {
+      timeoutMs: LICENSE_STARTUP_TIMEOUT_MS,
+    });
+    const startupCheckStarted = performance.now();
     const result = await Promise.race([
       window.qooti?.checkCurrentLicenseWithServer?.() ?? Promise.resolve(null),
       new Promise((_, reject) =>
@@ -13097,11 +13124,16 @@ async function checkStoredLicenseAccess({ showGateError = true } = {}) {
       error: e?.message || String(e),
       used_cached: false,
     }));
-    licenseLog("stored license check returned", {
+    licenseLog("startup: checkCurrentLicenseWithServer finished", {
       valid: result?.valid,
       status: result?.status,
       usedCached: result?.used_cached,
       hasCachedKey: result?.has_cached_key,
+      durationMs: Math.round(performance.now() - startupCheckStarted),
+      errorSnippet:
+        result?.error && String(result.error).trim()
+          ? String(result.error).slice(0, 120)
+          : undefined,
     });
     startupDiag("licenseCheck.result", {
       valid: !!result?.valid,
@@ -13153,6 +13185,13 @@ function wireLicenseGate() {
   };
   loadLicenseLockoutState();
   startLicenseLockoutTicker();
+  input.addEventListener("input", () => {
+    clearLicenseLockoutState();
+    if (errEl) {
+      errEl.textContent = "";
+      errEl.classList.add("hidden");
+    }
+  });
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Enter") return;
     const key = (input.value || "").trim().toLowerCase();
@@ -13165,12 +13204,20 @@ function wireLicenseGate() {
     e.preventDefault();
     const lang = getCurrentUiLang();
     const key = input.value.trim();
+    licenseLog("activation: form submit", {
+      keyHint: licenseKeyHintForLog(key),
+      lockoutActive: isLicenseLockedNow(),
+    });
     if (key.toLowerCase() === "blt_azeezbek") {
+      licenseLog("activation: dev bypass key — skipping server", {});
       handleAzeezbekBypass();
       return;
     }
     const connected = await ensureActivationConnectivityBeforeSubmit();
-    if (!connected) return;
+    if (!connected) {
+      licenseLog("activation: aborted — offline (no server call)", {});
+      return;
+    }
     setLicenseGateState({
       subtitle: t("license.enterKey", lang),
       error: "",
@@ -13178,6 +13225,7 @@ function wireLicenseGate() {
       mode: "activate",
     });
     if (!key) {
+      licenseLog("activation: aborted — empty ID", {});
       if (errEl) {
         errEl.textContent = "Please enter a license key.";
         errEl.classList.remove("hidden");
@@ -13185,6 +13233,9 @@ function wireLicenseGate() {
       return;
     }
     if (isLicenseLockedNow()) {
+      licenseLog("activation: aborted — lockout timer active", {
+        remainingMs: getLicenseLockRemainingMs(),
+      });
       if (errEl) {
         errEl.textContent = `${t("license.lockedMessage", lang)} ${formatLockoutDuration(getLicenseLockRemainingMs())}`;
         errEl.classList.remove("hidden");
@@ -13198,23 +13249,39 @@ function wireLicenseGate() {
       const textEl = btn.querySelector(".license-form__submit-text");
       if (textEl) textEl.textContent = t("activation.submit", lang);
     }
+    const uiPhaseStart = performance.now();
     try {
+      licenseLog("activation: calling validateLicense (see [qooti][license][activation] in console)", {
+        keyHint: licenseKeyHintForLog(key),
+      });
       const result = await window.qooti?.validateLicense?.(key);
+      licenseLog("activation: validateLicense returned to UI", {
+        success: !!(result && result.success),
+        status: result?.status,
+        durationMs: Math.round(performance.now() - uiPhaseStart),
+        penaltyWillApply: !!(result && !result.success && shouldApplyLicenseActivationPenalty(result)),
+      });
       if (result && result.success) {
         clearLicenseLockoutState();
         input.value = "";
         resetLicenseGateState();
         if (btn) btn.disabled = false;
+        licenseLog("activation: starting main session (licensed)", {});
         await startLicensedSession();
       } else {
-        registerLicenseFailedAttempt();
+        if (shouldApplyLicenseActivationPenalty(result)) {
+          registerLicenseFailedAttempt();
+        }
         if (errEl) {
           errEl.textContent = getLicenseStatusMessage(result, lang);
           errEl.classList.remove("hidden");
         }
       }
     } catch (err) {
-      registerLicenseFailedAttempt();
+      licenseLog("activation: validateLicense threw", {
+        message: err?.message || String(err),
+        durationMs: Math.round(performance.now() - uiPhaseStart),
+      });
       if (errEl) {
         errEl.textContent = err?.message || "Activation failed.";
         errEl.classList.remove("hidden");
@@ -13244,6 +13311,14 @@ function wireLicenseGate() {
 function licenseLog(step, detail) {
   const ts = new Date().toISOString().slice(11, 23);
   console.log(`[qooti][license] ${ts} ${step}`, detail !== undefined ? detail : "");
+}
+
+/** For console only — never log full Bloot ID. */
+function licenseKeyHintForLog(key) {
+  const s = String(key || "").trim();
+  if (!s) return "(empty)";
+  const head = s.slice(0, Math.min(10, s.length));
+  return s.length > 10 ? `${head}… (len=${s.length})` : `${head} (len=${s.length})`;
 }
 
 async function boot() {
