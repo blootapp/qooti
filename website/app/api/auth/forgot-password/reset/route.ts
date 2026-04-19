@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { hash } from "bcryptjs";
 import { getAndConsumePasswordResetToken } from "@/lib/verification-codes";
 import { blootInternalResetPassword, isBlootWorkerConfigured } from "@/lib/bloot-api";
-import { updatePasswordHashByEmail } from "@/lib/users";
+
+export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   let body: { passwordResetToken?: string; newPassword?: string };
@@ -17,20 +18,26 @@ export async function POST(request: NextRequest) {
   if (newPassword.length < 8) {
     return NextResponse.json({ error: "Password must be at least 8 characters" }, { status: 400 });
   }
-  const tokenData = getAndConsumePasswordResetToken(token);
+  const tokenData = await getAndConsumePasswordResetToken(token);
   if (!tokenData) return NextResponse.json({ error: "Reset session expired" }, { status: 400 });
   const passwordHash = await hash(newPassword, 10);
 
-  if (isBlootWorkerConfigured()) {
-    const r = await blootInternalResetPassword({
-      email: tokenData.email,
-      passwordHash,
-    });
-    if (!r.ok) {
-      return NextResponse.json({ error: r.error || "Password reset failed" }, { status: r.status || 500 });
-    }
+  if (!isBlootWorkerConfigured()) {
+    return NextResponse.json(
+      {
+        error:
+          "Password reset is temporarily unavailable. Set BLOOT_API_URL and BLOOT_INTERNAL_SECRET.",
+      },
+      { status: 503 }
+    );
   }
 
-  updatePasswordHashByEmail(tokenData.email, passwordHash);
+  const r = await blootInternalResetPassword({
+    email: tokenData.email,
+    passwordHash,
+  });
+  if (!r.ok) {
+    return NextResponse.json({ error: r.error || "Password reset failed" }, { status: r.status || 500 });
+  }
   return NextResponse.json({ ok: true }, { status: 200 });
 }

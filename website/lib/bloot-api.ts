@@ -10,24 +10,37 @@ export function isBlootWorkerConfigured(): boolean {
   return !!(baseUrl() && internalSecret());
 }
 
-export async function blootInternalRegister(data: {
-  email: string;
-  passwordHash: string;
-  name: string;
-  surname: string;
-  username: string;
-}): Promise<
-  | { ok: true; blootUserId: string; email: string; name: string; surname: string; username: string }
+export async function blootInternalRegister(
+  data: {
+    email: string;
+    passwordHash: string;
+    name: string;
+    surname: string;
+    username: string;
+  },
+  clientIp?: string
+): Promise<
+  | {
+      ok: true;
+      blootUserId: string;
+      email: string;
+      name: string;
+      surname: string;
+      username: string;
+      passwordChangedAt: number;
+    }
   | { ok: false; error: string; status: number }
 > {
   const url = baseUrl();
   const secret = internalSecret();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Internal-Secret": secret,
+  };
+  if (clientIp) headers["X-Bloot-Client-Ip"] = clientIp;
   const res = await fetch(`${url}/bloot/internal/register`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Internal-Secret": secret,
-    },
+    headers,
     body: JSON.stringify(data),
   });
   const j = (await res.json()) as Record<string, unknown>;
@@ -41,6 +54,7 @@ export async function blootInternalRegister(data: {
     name: String(j.name),
     surname: String(j.surname),
     username: String(j.username),
+    passwordChangedAt: Number(j.passwordChangedAt ?? 0),
   };
 }
 
@@ -56,6 +70,7 @@ export async function blootLogin(data: {
         name: string;
         surname: string;
         username: string;
+        passwordChangedAt: number;
       };
     }
   | { ok: false; error: string; status: number }
@@ -79,6 +94,7 @@ export async function blootLogin(data: {
       name: String(u.name),
       surname: String(u.surname),
       username: String(u.username),
+      passwordChangedAt: Number(u.passwordChangedAt ?? 0),
     },
   };
 }

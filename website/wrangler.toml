@@ -1,0 +1,7 @@
+# Cloudflare Pages — local `wrangler pages dev` and optional CLI deploys.
+# Dashboard: set root to `website`, build to `npm run pages:build`, output `.vercel/output/static`,
+# compatibility flags: nodejs_compat.
+
+name = "bloot-app"
+compatibility_date = "2025-04-01"
+pages_build_output_dir = ".vercel/output/static"

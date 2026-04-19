@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
+import { validateSessionPayload } from "@/lib/api-session";
 import { getUserByEmail } from "@/lib/users";
-import { getSessionEmail, getSessionPayload, SESSION_COOKIE } from "@/lib/sessions";
+import { SESSION_COOKIE } from "@/lib/bloot-session";
 
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   try {
     const token = request.cookies.get(SESSION_COOKIE)?.value;
-    const payload = getSessionPayload(token);
+    const payload = await validateSessionPayload(token);
     const email = payload?.email ?? null;
 
     if (!email) {
@@ -28,7 +30,7 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    const user = getUserByEmail(email);
+    const user = await getUserByEmail(email);
     if (!user) {
       return NextResponse.json({ user: null }, { status: 200 });
     }

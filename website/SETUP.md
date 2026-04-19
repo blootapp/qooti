@@ -11,25 +11,47 @@ RESEND_API_KEY=re_your_actual_key_here
 # Optional: sender address (default: bloot <noreply@bloot.app>)
 RESEND_FROM_EMAIL=bloot <noreply@bloot.app>
 
-# bloot license Worker (Cloudflare D1) — optional; when set, login/register use the Worker
-# Same URL as QOOTI_LICENSE_API_URL for the desktop app (no trailing slash).
+# bloot license Worker (Cloudflare D1) — required for login, register, dashboard, verification
+# Same URL as the desktop app license API (no trailing slash).
 BLOOT_API_URL=https://your-worker.workers.dev
 # Must match the Worker's INTERNAL_SECRET (wrangler secret put INTERNAL_SECRET)
 BLOOT_INTERNAL_SECRET=
+
+# JWT signing secret for session cookies (openssl rand -hex 32)
+JWT_SECRET=
+
+# Public site URL (used for SEO / absolute links where needed)
+NEXT_PUBLIC_SITE_URL=https://bloot.app
+
+# Optional: GitHub token for /api/download/latest (private releases)
+# GITHUB_TOKEN=
 ```
 
 - Replace `re_your_actual_key_here` with your real Resend API key.
 - Without `RESEND_API_KEY`, the app will show: *"Email is not configured. Add RESEND_API_KEY to .env.local"*.
+- `BLOOT_API_URL` + `BLOOT_INTERNAL_SECRET` are required for auth, dashboard data, and email/reset verification (Worker + D1).
+- `JWT_SECRET` is required for signed session cookies (`bloot_session`).
 - Restart the dev server after creating or editing `.env.local` (`npm run dev`).
 
 `.env.local` is gitignored; never commit it.
 
-## 2. Database (SQLite vs Worker)
+## 2. Cloudflare Pages (`@cloudflare/next-on-pages`)
 
-- **If `BLOOT_API_URL` and `BLOOT_INTERNAL_SECRET` are set:** registration creates a **bloot user ID** (UUID) and a **7-day qooti trial** in the Worker’s **D1** database; login verifies against D1. Sessions still use the in-memory store in dev (see [lib/sessions.ts](lib/sessions.ts)).
-- **If those vars are unset in local dev:** the app uses **local SQLite** at **`data/bloot.sqlite`** via `better-sqlite3` (email, name, surname, username, hashed password). The numeric `id` is returned as `blootUserId` for local-only testing.
-- **Production safety:** in production runtime, login/register now fail with a clear configuration error when the website is not connected to the Worker, so users are not accidentally created in local-only storage.
+Install uses `legacy-peer-deps` because the adapter expects a slightly newer Next semver than 14.2.x; CI/Linux builds should run:
 
-## 2b. qooti license renewal page
+- **Build command:** `npm run pages:build` (runs the Vercel-style build the adapter needs, then emits `.vercel/output/static`).
+- **Output directory:** `.vercel/output/static`
+- **Project root:** `website` (if the repo root is the monorepo).
+- **Functions:** enable **Node.js compatibility** (`nodejs_compat`), matching [wrangler.toml](wrangler.toml).
+
+**Local preview after a successful `pages:build`:**
+
+```bash
+npm run pages:dev
+```
+
+On Windows, the adapter may invoke tooling that expects a Unix shell; if `pages:build` fails locally, use WSL or rely on Cloudflare’s Linux build image.
+
+## 3. qooti license renewal page
 
 - **Dashboard → Billing (`/dashboard/billing#plans`)** — qooti packages with Telegram links to **@blootsupport** (pre-filled message with bloot user ID). Legacy **`/qooti-license`** redirects there.

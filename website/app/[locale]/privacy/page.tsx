@@ -1,11 +1,11 @@
-import fs from "node:fs";
-import path from "node:path";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
 import { LegalMarkdownBody } from "@/components/legal/LegalMarkdownBody";
 import { LegalPageShell } from "@/components/legal/LegalPageShell";
 import { buildPublicPageMetadata } from "@/lib/seo/metadata";
 import { routing } from "@/i18n/routing";
+import privacyEn from "@/files/privacy-policy-en.md";
+import privacyUz from "@/files/privacy-policy-uz.md";
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -23,9 +23,7 @@ export default async function PrivacyPage({ params }: { params: Promise<{ locale
   if (!routing.locales.includes(locale as "uz" | "en")) notFound();
   setRequestLocale(locale);
 
-  const file = locale === "en" ? "privacy-policy-en.md" : "privacy-policy-uz.md";
-  const filePath = path.join(process.cwd(), "files", file);
-  const source = fs.readFileSync(filePath, "utf8");
+  const source = locale === "en" ? privacyEn : privacyUz;
 
   return (
     <LegalPageShell>

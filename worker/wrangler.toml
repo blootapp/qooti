@@ -15,3 +15,9 @@ migrations_dir = "migrations"
 #
 # Internal secret for website → Worker POST /bloot/internal/register:
 #   npx wrangler secret put INTERNAL_SECRET
+#
+# Rate limiting: create a KV namespace and add:
+#   [[kv_namespaces]]
+#   binding = "RATE_LIMIT"
+#   id = "<namespace_id>"
+# Without RATE_LIMIT, rate limits are skipped (dev only — not safe for production).

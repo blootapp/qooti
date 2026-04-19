@@ -1,277 +1,350 @@
-# Terms and Conditions
+# Foydalanish shartlari
 
-**qooti — by bloot**  
-**Last updated: April 5, 2026**
-
----
-
-## 1. Introduction
-
-These Terms and Conditions ("Terms") govern your use of qooti, a desktop application and Chrome browser extension developed and operated by bloot, based in Uzbekistan.
-
-By downloading, installing, or using qooti, you agree to be bound by these Terms in full. If you do not agree with any part of these Terms, do not use qooti.
-
-For support or questions, contact us on Telegram: **@blootsupport**
+**Qooti — Bloot kompaniyasi tomonidan**  
+**So'nggi yangilanish: 2026-yil 19-aprel**
 
 ---
 
-## 2. The Service
+## 1. Kirish
 
-qooti is a visual inspiration library for creatives. It allows you to save images and videos from the web to a local library on your own device, organize saved media into collections, and search through your library.
+Ushbu Foydalanish shartlari («Shartlar») O'zbekistonda joylashgan Bloot tomonidan ishlab chiqilgan va boshqariladigan Qooti dasturiy ta'minoti — ish stoli ilovasi va Google Chrome brauzer kengaytmasidan foydalanishingizni tartibga soladi.
 
-qooti is a tool for collecting and organizing media content in one place. qooti does not claim ownership of any content saved through the app. All rights to any saved content remain with the original creators of that content.
+Qootini yuklab olish, o'rnatish yoki undan foydalanish orqali siz ushbu Shartlarning to'liq hajmiga rozilik bildirasiz. Agar Shartlarning biror qismiga rozi bo'lmasangiz, Qootidan foydalanmang.
 
-qooti is officially supported on the following platforms:
-
-- **Windows** — desktop application
-- **macOS** — desktop application
-- **Google Chrome** — browser extension (requires the qooti desktop app to be installed and running on the same machine)
-
-We do not guarantee support on any platform not listed above.
+Qo'llab-quvvatlash yoki savollar uchun Telegram orqali murojaat qiling: **@Blootsupport**
 
 ---
 
-## 3. Eligibility and Age Requirement
+## 2. Xizmat
 
-You must be at least **13 years old** to create a bloot account and use qooti. By creating an account you confirm that you meet this age requirement.
+Qooti ijodkorlar uchun vizual ilhom kutubxonasidir. U internetdan rasmlar va videolarni o'z qurilmangizdagi mahalliy kutubxonaga saqlash, saqlangan media kontentni to'plamlarga tartiblash va kutubxonangiz bo'ylab qidirish imkonini beradi.
 
-If you are under 18 years old, you should have permission from a parent or legal guardian to use qooti.
+Qooti — media kontentni bir joyda yig'ish va tartibga solish vositasidir. Qooti ilova orqali saqlangan har qanday kontentga egalik qilmaydi. Saqlangan kontent bo'yicha barcha huquqlar uning asl mualliflariga tegishli qoladi.
 
-We do not knowingly collect personal information from children under 13. If we become aware that a user is under 13, we will terminate their account immediately.
+Qooti quyidagi platformalarda rasmiy ravishda qo'llab-quvvatlanadi:
 
----
+- **Windows** — ish stoli ilovasi
+- **macOS** — ish stoli ilovasi
+- **Google Chrome** — brauzer kengaytmasi (shu qurilmada Qooti ish stoli ilovasi o'rnatilgan va ishlayotgan bo'lishi kerak)
 
-## 4. Accounts
-
-To use qooti you must create a bloot account with a username, email address, and password.
-
-**Your account:**
-- Your username must be unique across all bloot accounts
-- You may change your username once every 14 days
-- Changing your username does not change your permanent account ID
-- Your account ID (format: BLT-xxxx-xxxx-xxxx) is assigned at registration and remains the same for the entire lifetime of your account — it never changes regardless of any other account modifications
-- You are responsible for keeping your credentials secure
-- You are responsible for all activity that occurs under your account
-- Do not share your account or credentials with others
+Yuqorida sanab o'tilmagan boshqa platformalarda qo'llab-quvvatlash kafolatlanmaydi.
 
 ---
 
-## 5. Free Trial
+## 3. Yoshi va moslik talablari
 
-New users receive a 7-day free trial upon creating an account and activating it with a valid email address.
+Bloot hisobini yaratish va Qootidan foydalanish uchun kamida **13 yoshda** bo'lishingiz kerak. Hisob yaratish orqali ushbu yosh talabiga javob berishingizni tasdiqlaysiz.
 
-**Trial terms:**
-- One free trial per person
-- One free trial per device
-- The trial is linked to your email address and device identifier
-- Creating multiple accounts to obtain additional free trials is a violation of these Terms
-- Attempting to manipulate your device's system clock or any other mechanism to extend the trial period is a violation of these Terms and will result in immediate account termination
-- When the trial expires, access to the app is fully restricted until a subscription is purchased
+Agar 18 yoshgacha bo'lsangiz, Qootidan foydalanish uchun ota-ona yoki qonuniy vasiylardan ruxsat olishingiz kerak.
 
-There are no refunds for the trial period as it is provided entirely free of charge. We encourage all users to fully evaluate qooti during the free trial before making any purchase.
+13 yoshdan kichik bolalarning shaxsiy ma'lumotlarini ataylab to'plamaymiz. Foydalanuvchi 13 yoshdan kichik ekanligi aniqlansa, uning hisobi darhol yopiladi.
 
 ---
 
-## 6. Subscriptions and Pricing
+## 4. Hisoblar
 
-qooti offers the following subscription plans, all paid upfront with no automatic renewal:
+Qootidan foydalanish uchun foydalanuvchi nomi, elektron pochta va parol bilan Bloot hisobi yaratishingiz kerak.
 
-| Plan | Price |
-|------|-------|
-| 1 month | 49,000 UZS |
-| 6 months | 199,000 UZS |
-| 1 year | 299,000 UZS |
-
-**How purchasing works:**
-- All purchases are processed manually via Telegram (@blootsupport)
-- Payment is accepted via Click, Payme, or bank transfer within Uzbekistan
-- Your subscription is activated after your payment is verified by us
-- Subscriptions do not renew automatically — you must purchase an extension manually
-- You will receive confirmation of activation via Telegram
-
-**Future pricing:**
-- We reserve the right to adjust subscription prices at any time
-- We will notify users of price changes at least 7 days before they take effect via our Telegram channel (https://t.me/blootapp) and/or within the app itself
-- Price changes do not affect your current active subscription period — you keep what you paid for
+**Sizning hisobingiz:**
+- Foydalanuvchi nomingiz barcha Bloot hisoblari orasida noyob bo'lishi kerak
+- Foydalanuvchi nomini har 14 kunda bir marta o'zgartirishingiz mumkin
+- Foydalanuvchi nomini o'zgartirish doimiy hisob identifikatoringizni o'zgartirmaydi
+- Hisob identifikatoringiz (format: BLT-xxxx-xxxx-xxxx) ro'yxatdan o'tishda beriladi va hisobingiz butun mavjudligi davomida o'zgarmaydi — boshqa hisob o'zgarishlaridan qat'iy nazar
+- Kirish ma'lumotlaringizni xavfsiz saqlash sizning zimmangizda
+- Hisobingiz ostida sodir bo'lgan barcha faoliyat uchun javobsizsiz
+- Hisobingiz yoki kirish ma'lumotlaringizni boshqalar bilan ulashmang
 
 ---
 
-## 7. Refund Policy
+## 5. Bepul sinov muddati
 
-Because qooti provides a free 7-day trial before any payment is required, all sales are final and we do not offer refunds.
+Yangi foydalanuvchilar hisob yaratganda va haqiqiy elektron pochta manzili bilan faollashtirganda 7 kunlik bepul sinov muddati oladi.
 
-The free trial gives full access to all features available under a paid subscription so you can make an informed decision before purchasing. We encourage you to use the trial period fully.
+**Sinov shartlari:**
+- Har bir kishi uchun bitta bepul sinov
+- Har bir qurilma uchun bitta bepul sinov
+- Sinov elektron pochta manzilingiz va qurilma identifikatoringiz bilan bog'langan
+- Qo'shimcha bepul sinovlar olish uchun bir nechta hisob yaratish ushbu Shartlarning buzilishidir
+- Sinov muddatini uzaytirish uchun qurilma soatini yoki boshqa usullarni manipulyatsiya qilish ushbu Shartlarning buzilishidir va hisobingiz darhol yopilishiga olib keladi
+- Sinov tugagach, obuna sotib olinmaguncha ilovaga kirish to'liq cheklanadi
 
-If you experience a technical issue that prevents you from using the app after purchase, contact us on Telegram (@blootsupport) and we will work to resolve it.
-
----
-
-## 8. What Happens When Your Subscription Expires
-
-When your subscription or free trial ends:
-
-- The app enters full lockout mode — you cannot save new items or access the main interface
-- Your locally saved media files (images and videos) are stored on your own device and are completely unaffected — we have no access to your local files and will never delete them
-- Your bloot account and server-side account data remain intact and are not automatically deleted
-- You can reactivate access at any time by purchasing a new subscription
-- Your library will be exactly as you left it when you return
+Sinov muddati to'liq bepul taqdim etilgani uchun uning uchun pul qaytarilmaydi. Sotib olishdan oldin Qootini sinov davrida to'liq baholashingizni tavsiya qilamiz.
 
 ---
 
-## 9. Account Data and Deletion
+## 6. Obunalar va narxlar
 
-**Two types of data exist in qooti:**
+Qooti quyidagi obuna rejalarni taklif etadi; barchasi oldindan to'lanadi, avtomatik yangilanish yo'q:
 
-**Local data** — images, videos, and collections stored on your own device. This data belongs entirely to you. bloot has no access to it and will never delete it. It persists on your device regardless of your subscription status.
+| Reja | Narx |
+|------|------|
+| 1 oy | 49 000 so'm |
+| 6 oy | 199 000 so'm |
+| 1 yil | 299 000 so'm |
 
-**Server data** — your account information (username, email, subscription status, purchased collections) stored on bloot's servers. This data is retained for as long as your account exists.
+**Sotib olish tartibi:**
+- Barcha to'lovlar Telegram (@Blootsupport) orqali qo'lda amalga oshiriladi
+- O'zbekiston ichida Click, Payme yoki bank o'tkazmasi qabul qilinadi
+- To'lovingiz tomonimizdan tasdiqlangach obunangiz faollashadi
+- Obunalar avtomatik yangilanmaydi — uzaytirishni qo'lda sotib olishingiz kerak
+- Faollashtirish tasdiqlanishi Telegram orqali keladi
 
-**When you delete your account:**
-- All server-side account data is deleted
-- Your locally stored media files on your device are not affected
-- To prevent abuse of the free trial system, we retain your email address and device identifier even after account deletion. This information is used solely to prevent creation of new accounts for the purpose of obtaining additional free trials. It is not used for any other purpose.
-
-**Account inactivity:**
-- We do not automatically delete inactive accounts
-- Your account data remains on our servers until you choose to delete it
-
----
-
-## 10. Content and Intellectual Property
-
-qooti is a tool for collecting and organizing media for personal inspiration and reference. It does not transfer, grant, or modify any rights over the content you save.
-
-**Ownership of saved content:**
-- All rights to any image, video, or other media saved through qooti remain exclusively with the original creator or rights holder of that content
-- Neither bloot nor the user gains ownership of saved content simply by saving it through qooti
-- You are solely responsible for ensuring your use of saved content complies with the copyright and intellectual property laws applicable to that content
-
-**bloot's intellectual property:**
-- The qooti application, its design, code, branding, and free collections provided by bloot are the intellectual property of bloot
-- You may not copy, modify, distribute, or create derivative works from any part of qooti without our explicit written permission
+**Kelajakdagi narxlar:**
+- Obuna narxlarini istalgan vaqt o'zgartirish huquqini o'zimizda saqlaymiz
+- Narx o'zgarishlari kuchga kirishidan kamida 7 kun oldin Telegram kanalimiz (https://t.me/blootapp) va/yoki ilova ichida xabar beramiz
+- Narx o'zgarishlari joriy faol obuna muddatingizga ta'sir qilmaydi — to'laganingiz uchun olasiz
 
 ---
 
-## 11. Collections
+## 6a. To'lovning to'liqligi
 
-**Free collections:**
-qooti provides curated free collections for download during onboarding and from the Store. These are provided for personal inspiration and reference use only. Free collections may not be redistributed, resold, or used commercially without obtaining appropriate rights from the original rights holders.
+Obuna narxi to'liq to'lanishi kerak. Qisman to'lov hisobni faollashtirmaydi.
 
-**User collections:**
-You may share your own personally curated collections with other qooti users. However, you may not share, distribute, or transfer any paid collection you have purchased. Paid collections are licensed for your personal use only and sharing them with others is a violation of these Terms.
-
----
-
-## 12. Data We Collect
-
-bloot collects the following data:
-
-**Account data** — username, email address, subscription status, account ID, and device identifier. This is necessary to operate the service.
-
-**Anonymized usage data** — we collect anonymized, non-identifiable data about how the app is used (such as which features are used most frequently) to help us improve qooti. This data cannot be used to identify you personally.
-
-**What we do not collect:**
-- We do not collect, access, or store any media files you save through qooti
-- We do not sell your personal data to third parties
-- We do not use your data for advertising purposes
-
-For full details on how we handle your data, see our Privacy Policy at bloot.app/privacy.
+Tanlangan reja bo'yicha ko'rsatilgan narxdan kam miqdor yuborsangiz:
+- To'liq summa kelmaguncha obunangiz faollashmaydi
+- Qolgan summani yuborish haqida Telegram orqali xabar olasiz
+- Qolgan summa 7 kun ichida kelmasa, qisman to'lov o'tkazma xarajatlari ayirilgan holda qaytarilishi yoki kelajakdagi xaridga kredit sifatida qo'llanishi mumkin (bizning ixtiyorimizda)
+- Qisman to'lovlarni cheksiz saqlash majburiyatimiz yo'q
 
 ---
 
-## 13. Acceptable Use
+## 6b. Ortiqcha to'lov
 
-You agree to use qooti only for lawful purposes and in accordance with these Terms. You agree not to:
-
-- Violate any applicable laws or regulations
-- Infringe on the intellectual property or privacy rights of any person
-- Reverse engineer, decompile, disassemble, or attempt to extract the source code of the application
-- Create multiple accounts to abuse the free trial system
-- Circumvent, disable, or interfere with license validation, authentication, or security mechanisms
-- Share, resell, or transfer your account or subscription to another person
-- Share or distribute purchased collections with others
-- Use qooti to store or distribute illegal content of any kind
+Tanlangan rejadan ortiq miqdor yuborsangiz:
+- So'ragan obuna rejangiz beriladi — ortiqcha to'lov asosida avtomatik yuqori rejaga o'tkazilmaysiz
+- Ortiqcha summa keyingi uzaytirishga kredit sifatida qo'llanishi mumkin (bizning ixtiyorimizda)
+- Qo'lda to'lov jarayonining tabiati tufayli ortiqcha to'lovning naqd pulda qaytarilishini kafolatlamaymiz
 
 ---
 
-## 14. Misuse and Enforcement
+## 6c. To'lovni tasdiqlash
 
-We take misuse of qooti seriously. Our response to misuse depends on the nature and severity of the violation:
+Faollashtirish faqat to'lov biz tomonidan tasdiqlangach sodir bo'ladi. Tez faollashtirish uchun:
+- To'lov dalilini (skrinshot yoki tranzaksiya ID) Telegramda @Blootsupport ga yuboring
+- Xabaringizda Bloot hisob identifikatoringizni (BLT-xxxx-xxxx-xxxx) ko'rsating
+- Qaysi obuna rejasini sotib olayotganingizni aniq yozing
+- Hisobingiz faollashgan deb hisoblashdan oldin bizdan yozma tasdiqni kuting
 
-**Minor violations** (such as attempting to extend a trial, sharing account credentials, or minor policy breaches) will result in:
-- Account suspension or permanent termination
-- Loss of any remaining subscription period without refund
-
-**Serious violations** (such as reverse engineering the application, systematic piracy of paid content, large-scale trial abuse, or any illegal use of the app) may result in:
-- Immediate account termination
-- Legal action under the applicable laws of the Republic of Uzbekistan
-- Claims for damages caused by the misuse
-
-We reserve the right to determine the severity of any violation and respond accordingly at our sole discretion.
+To'lov ma'lumotlari to'liq yoki noto'g'ri bo'lsa, faollashtirishdagi kechikishlar uchun javobgar emasmiz.
 
 ---
 
-## 15. Disclaimer of Warranties
+## 6d. Noto'g'ri to'lov ma'lumotlari
 
-qooti is provided "as is" and "as available" without warranties of any kind, either express or implied, including but not limited to warranties of merchantability, fitness for a particular purpose, or non-infringement.
+To'lov yuborsangiz lekin noto'g'ri Bloot ID, noto'g'ri reja yoki hech qanday identifikatsiya bermasangiz — darhol @Blootsupport ga to'g'ri Bloot ID va to'lov dalili bilan murojaat qiling.
 
-We do not warrant that:
-- The app will be uninterrupted, error-free, or completely secure at all times
-- Any bugs or errors will be corrected within a specific timeframe
-- The app will be compatible with all devices or operating system versions
+To'lovni hisobingiz bilan moslashtirish uchun oqilona harakat qilamiz. Ammo to'lovni haqiqiy Bloot hisobiga tekshirib bog'lay olmasak, faollashtirishni kafolatlay olmaymiz. Foydalanuvchi bergan noto'g'ri ma'lumotlardan kelgan kechikish yoki yo'qotishlar uchun javobgar emasmiz.
 
 ---
 
-## 16. Limitation of Liability
+## 6e. Takroriy to'lovlar
 
-To the fullest extent permitted by applicable law, bloot and its operators shall not be liable for any damages whatsoever arising from your use of or inability to use qooti.
-
-This includes but is not limited to:
-- Loss of data
-- Loss of saved media
-- Interruption of service
-- Any indirect, incidental, special, consequential, or punitive damages
-
-Because qooti stores your media locally on your own device and we have no access to it, we strongly encourage you to maintain your own backups of any content important to you. bloot is not responsible for any loss of locally stored data.
+Xuddi shu obuna davri uchun tasodifan ikki marta to'lov yuborsangiz, darhol @Blootsupport ga ikkala tranzaksiya dalili bilan murojaat qiling. Ortiqcha to'lov keyingi uzaytirishga kredit sifatida qo'llanadi. Tasodifiy takroriy to'lovlar uchun naqd qaytarilishini kafolatlamaymiz.
 
 ---
 
-## 17. Service Discontinuation
+## 6f. Uchinchi shaxslarning to'lovlari
 
-We are committed to qooti and plan to continue operating and improving it. However, we reserve the right to discontinue the qooti service at any time.
-
-If we decide to shut down qooti:
-- We will provide at least **30 days notice** via our Telegram channel (https://t.me/blootapp) and within the app itself
-- Your locally stored media files on your device will remain completely unaffected — we cannot and will not delete files on your device
-- All server-side account data will be deleted after the shutdown date
-- We will make reasonable efforts to assist users in exporting any account data during the notice period
+To'lovlar hisob egasi tomonidan yoki uning to'liq xabardorligi va roziligi bilan amalga oshirilishi kerak. Agar to'lov uchinchi shaxs hisobi yoki kartasidan amalga oshirilsa, hisob egasi ushbu to'lov va undan kelib chiqadigan nizolar uchun to'liq javobgardir. Foydalanuvchilar nomiga to'lov qilgan uchinchi shaxslar bilan bog'liq nizolarni hal qilmaymiz.
 
 ---
 
-## 18. Changes to These Terms
+## 6g. Bekor qilingan va qaytarilgan to'lovlar
 
-We may update these Terms from time to time. When we do, we will update the "Last updated" date at the top of this page.
-
-We will notify users of material changes via our Telegram channel (https://t.me/blootapp) or within the app at least 7 days before the changes take effect.
-
-Your continued use of qooti after changes take effect constitutes your acceptance of the updated Terms.
-
----
-
-## 19. Governing Law
-
-These Terms are governed by and construed in accordance with the laws of the Republic of Uzbekistan. Any disputes arising from these Terms or your use of qooti shall be subject to the exclusive jurisdiction of the courts of Uzbekistan.
+Obunangiz faollashgandan keyin to'lov bekor qilinsa, qaytarilsa, chargeback qilinsa yoki nizo qilinsa:
+- Hisobingiz darhol to'xtatiladi
+- To'lov nizosi hal qilinmaguncha Qootiga kirish bloklanadi
+- Firibgar chargeback yoki to'lov qaytarishlari bilan bog'liq hisoblarni butunlay yopish huquqini o'zimizda saqlaymiz
+- Qaytarilgan to'lovlar tufayli yo'qotilgan summalarni undirish huquqini o'zimizda saqlaymiz
 
 ---
 
-## 20. Contact
+## 6h. Soxta yoki tahrirlangan to'lov dalili
 
-All support, purchase requests, and legal inquiries are handled through Telegram.
-
-**Support:** @blootsupport  
-**Channel:** https://t.me/blootapp  
-**Website:** bloot.app
+Obuna olish uchun soxta, tahrirlangan yoki manipulyatsiya qilingan to'lov skrinshoti yoki tranzaksiya yozuvini yuborish firibgarlikdir. Bu quyidagilarga olib kelishi mumkin:
+- Darhol va butunlay hisobni yopish
+- Qoidalar bo'yicha tegishli organlarga xabar berish
+- O'zbekiston Respublikasi qonunchiligiga muvofiq huquqiy choralar
 
 ---
 
-*These Terms and Conditions were last updated on April 5, 2026.*
+## 7. Pulni qaytarish siyosati
+
+Qooti har qanday to'lovdan oldin 7 kunlik bepul sinov muddati berilgani uchun barcha sotuvlar yakuniy qilinadi va pul qaytarilmaydi.
+
+Bepul sinov to'lovli obunasi ostida mavjud bo'lgan barcha funksiyalarga to'liq kirishni beradi — sotib olishdan oldin xavfsiz qaror qilishingiz mumkin. Sinov muddatidan to'liq foydalanishingizni tavsiya qilamiz.
+
+Sotib olishdan keyin ilovadan foydalanishga to'sqinlik qiladigan texnik muammo yuzaga kelsa, Telegramda (@Blootsupport) murojaat qiling — hal qilishga harakat qilamiz.
+
+---
+
+## 8. Obuna tugaganda nima bo'ladi
+
+Obunangiz yoki bepul sinov muddati tugaganda:
+
+- Ilova to'liq bloklash rejimiga o'tadi — yangi elementlarni saqlab bo'lmaydi va asosiy interfeysga kira olmaysiz
+- Mahalliy saqlangan media fayllaringiz (rasm va videolar) o'z qurilmangizda saqlanadi va ularga ta'sir qilinmaydi — mahalliy fayllaringizga kira olmaymiz va ularni o'chirmaymiz
+- Bloot hisobingiz va server tomondagi hisob ma'lumotlaringiz saqlanib qoladi va avtomatik o'chirilmaydi
+- Yangi obuna sotib olish orqali istalgan vaqtda qayta kirishni tiklashingiz mumkin
+- Kutubxonangiz qaytganingizda xuddi tark etganingizda qolgan kabi bo'ladi
+
+---
+
+## 9. Hisob ma'lumotlari va o'chirish
+
+**Qootida ikki turdagi ma'lumot mavjud:**
+
+**Mahalliy ma'lumot** — o'z qurilmangizda saqlangan rasmlar, videolar va to'plamlar. Bu ma'lumotlar butunlay sizga tegishli. Bloot ularga kira olmaydi va ularni hech qachon o'chirmaydi. Obuna holatidan qat'iy nazar qurilmangizda saqlanadi.
+
+**Server ma'lumotlari** — foydalanuvchi nomi, elektron pochta, obuna holati, sotib olingan to'plamlar kabi Bloot serverlarida saqlangan hisob ma'lumotlari. Hisobingiz mavjud bo'lgan davrda saqlanadi.
+
+**Hisobni o'chirsangiz:**
+- Server tomondagi barcha hisob ma'lumotlari o'chiriladi
+- Qurilmangizda mahalliy saqlangan media fayllaringizga ta'sir qilinmaydi
+- Bepul sinov tizimidan suiiste'molni oldini olish uchun hisob o'chirilgandan keyin ham elektron pochta manzilingiz va qurilma identifikatoringizni saqlab qolamiz. Bu ma'lumotlar faqat qo'shimcha bepul sinovlar olish uchun yangi hisoblar yaratilishining oldini olish uchun ishlatiladi; boshqa maqsadlarda ishlatilmaydi.
+
+**Hisob faolsizligi:**
+- Faollik bo'lmagan hisoblarni avtomatik o'chirmaymiz
+- Hisob ma'lumotlaringiz serverda siz o'zini o'chirmaguncha saqlanadi
+
+---
+
+## 10. Kontent va intellektual mulk
+
+Qooti shaxsiy ilhom va ma'lumot uchun media yig'ish va tartibga solish vositasidir. Qulay saqlagan kontent bo'yicha huquqlarni o'tkazmaydi, bermaydi yoki o'zgartirmaydi.
+
+**Saqlangan kontentga egalik:**
+- Qooti orqali saqlangan har qanday rasm, video yoki boshqa media bo'yicha barcha huquqlar asl ijodkor yoki huquq egasiga tegishli qoladi
+- Bloot yoki foydalanuvchi faqat Qooti orqali saqlash bilan kontentga egalik qilmaydi
+- Saqlangan kontentdan foydalanishingiz unga tatbiq etiladigan mualliflik va intellektual mulk qonunlariga mos kelishi uchun yagona javobsizsiz
+
+**Blootning intellektual mulki:**
+- Qooti ilovasi, dizayni, kodi, brendlari va Bloot tomonidan taqdim etilgan bepul to'plamlar Blootning intellektual mulkidir
+- Yozma ruxsatsiz Qootining biror qismini nusxalash, o'zgartirish, tarqatish yoki undan hosila yaratish mumkin emas
+
+---
+
+## 11. To'plamlar
+
+**Bepul to'plamlar:**
+Qooti onboarding va Do'kondan yuklab olish uchun tanlangan bepul to'plamlarni taqdim etadi. Ular faqat shaxsiy ilhom va ma'lumot uchun beriladi. Asl huquq egalaridan tegishli huquqlarni olmasdan bepul to'plamlarni qayta tarqatish, qayta sotish yoki tijoriy foydalanish mumkin emas.
+
+**Foydalanuvchi to'plamlari:**
+O'zingiz shaxsan tuzgan to'plamlarni boshqa Qooti foydalanuvchilari bilan ulashishingiz mumkin. Ammo sotib olingan pullik to'plamni boshqa bilan ulashish, tarqatish yoki o'tkazish mumkin emas. Pullik to'plamlar faqat shaxsiy foydalanish uchun litsenziyalangan; boshqalar bilan ulashish ushbu Shartlarning buzilishidir.
+
+---
+
+## 12. Yig'adigan ma'lumotlar
+
+Bloot quyidagi ma'lumotlarni yig'adi:
+
+**Hisob ma'lumotlari** — foydalanuvchi nomi, elektron pochta, obuna holati, hisob identifikatori va qurilma identifikatori. Xizmatni ishlatish uchun zarur.
+
+**Anonimlashtirilgan foydalanish ma'lumotlari** — ilovadan qanday foydalanilishini (masalan, qaysi funksiyalar tez-tez ishlatilishini) Qootini yaxshilash uchun anonim, shaxsga bog'lanmaydigan tarzda yig'amiz. Bu ma'lumotlar sizni shaxsan aniqlash uchun ishlatilmaydi.
+
+**Nima yig'ilmaydi:**
+- Qooti orqali saqlagan media fayllaringizni yig'imaymiz, kirmaymiz va saqlamaymiz
+- Shaxsiy ma'lumotlaringizni uchinchi shaxslarga sotmaymiz
+- Ma'lumotlaringizni reklama maqsadida ishlatmaymiz
+
+Ma'lumotlaringizni qanday qayta ishlashimiz haqida to'liq ma'lumot uchun Maxfiylik siyosatimizga qarang: bloot.app/privacy.
+
+---
+
+## 13. Qabul qilinadigan foydalanish
+
+Qootidan faqat qonuniy maqsadlarda va ushbu Shartlarga muvofiq foydalanishga rozilik bildirasiz. Quyidagilarni qilmaslikka rozilik bildirasiz:
+
+- Amaldagi qonunlar va qoidalarni buzish
+- Har qanday shaxsning intellektual mulki yoki maxfiylik huquqlarini buzish
+- Ilovani teskari muhandislik, dekompilyatsiya, disassembllash yoki manba kodini ajratib olishga urinish
+- Bepul sinov tizimidan suiiste'mol qilish uchun bir nechta hisob yaratish
+- Litsenziyani tekshirish, autentifikatsiya yoki xavfsizlik mexanizmlarini aylanib o'tish, o'chirish yoki aralashish
+- Hisobingiz yoki obunangizni boshqa shaxsga ulashish, qayta sotish yoki o'tkazish
+- Sotib olingan to'plamlarni boshqalar bilan ulashish yoki tarqatish
+- Har qanday soxta yoki manipulyatsiya qilingan to'lov dalilini yuborish
+- Qootidan har qanday noqonuniy kontentni saqlash yoki tarqatish uchun foydalanish
+
+---
+
+## 14. Noto'g'ri foydalanish va choralar
+
+Qootidan suiiste'molni jiddiy qabul qilamiz. Javob buzilishning turi va og'irligiga bog'liq:
+
+**Yengil buzilishlar** (sinovni uzaytirishga urinish, hisob ma'lumotlarini ulashish yoki kichik qoidabuzarliklar) quyidagilarga olib kelishi mumkin:
+- Hisobni vaqtincha to'xtatish yoki butunlay yopish
+- Qolgan obuna muddatini pul qaytarmasdan yo'qotish
+
+**Og'ir buzilishlar** (ilovani teskari muhandislik, pullik kontentning tizimli piratligi, keng ko'lamli sinov suiiste'moli, firibgar to'lov dalili yuborish yoki ilovadan qonuniy bo'lmagan foydalanish) quyidagilarga olib kelishi mumkin:
+- Darhol hisobni yopish
+- O'zbekiston Respublikasining amaldagi qonunlariga muvofiq huquqiy choralar
+- Suiiste'moldan kelgan zarar uchun talablar
+
+Har qanday buzilishning og'irligini aniqlash va javob berish huquqini o'zimizda saqlaymiz.
+
+---
+
+## 15. Kafolatlarning rad etilishi
+
+Qooti «boricha» va «mavjud bo'lsa» taqdim etiladi; aniq yoki yashirin hech qanday kafolat berilmaydi, jumladan sotuvga yaroqlilik, ma'lum maqsad uchun moslik yoki huquq buzishmasligi bo'yicha kafolatlar.
+
+Quyidagilarni kafolatlamaymiz:
+- Ilova doim uzluksiz, xatosiz yoki har doim to'liq xavfsiz bo'ladi
+- Xatolar ma'lum vaqt ichida tuzatiladi
+- Ilova barcha qurilmalar yoki operatsion tizim versiyalari bilan mos keladi
+
+---
+
+## 16. Javobgarlikni cheklash
+
+Amaldagi qonunchilik ruxsat etgan eng keng doirada Bloot va uning operatorlari Qootidan foydalanishingiz yoki foydalana olmasligingizdan kelib chiqadigan har qanday zarar uchun javobgar emas.
+
+Jumladan qamrab oladi, lekin ular bilan cheklanmaydi:
+- Ma'lumot yo'qotishi
+- Saqlangan media yo'qotishi
+- Xizmatni to'xtatish
+- Bilvosita, tasodifiy, maxsus, oqibatli yoki jazo zararlari
+
+Qooti mediani mahalliy saqlanganligi va bizga kira olmasligimiz sababli, muhim kontent uchun o'z zaxiralaringizni saqlashingizni qat'iy tavsiya qilamiz. Mahalliy saqlangan ma'lumot yo'qotishi uchun Bloot javobgar emas.
+
+---
+
+## 17. Xizmatni to'xtatish
+
+Qootidan foydalanishni davom ettirish va yaxshilashga qat'iymiz. Ammo istalgan vaqtda Qooti xizmatini to'xtatish huquqini o'zimizda saqlaymiz.
+
+Qootini yopish qarorini qabul qilsak:
+- Kamida **30 kun oldindan** Telegram kanalimiz (https://t.me/blootapp) va ilova ichida xabar beramiz
+- Qurilmangizda mahalliy saqlangan media fayllaringizga ta'sir qilinmaydi — mahalliy fayllarni o'chira olmaymiz va o'chirmaymiz
+- Yopish sanasidan keyin server tomondagi barcha hisob ma'lumotlari o'chiriladi
+- Eslatma davrida hisob ma'lumotlarini eksport qilishda yordam berish uchun oqilona harakat qilamiz
+
+---
+
+## 18. Ushbu Shartlarga o'zgartirishlar
+
+Ushbu Shartlarni vaqt-vaqti bilan yangilashimiz mumkin. Bunda sahifa yuqorisidagi «So'nggi yangilanish» sanasini yangilaymiz.
+
+Muhim o'zgarishlar kuchga kirishidan kamida 7 kun oldin Telegram kanalimiz (https://t.me/blootapp) yoki ilova ichida xabar beramiz.
+
+O'zgarishlar kuchga kirgach Qootidan foydalanishni davom ettirish yangilangan Shartlarga rozilik bildirasiz.
+
+---
+
+## 19. Qo'llaniladigan qonunchilik
+
+Ushbu Shartlar O'zbekiston Respublikasi qonunlariga muvofiq talqin qilinadi va amalga oshiriladi. Ushbu Shartlar yoki Qootidan foydalanishingizdan kelib chiqadigan har qanday nizolar O'zbekiston sudlarining maxsus yurisdiksiyasiga bo'ysunadi.
+
+---
+
+## 20. Aloqa
+
+Barcha qo'llab-quvvatlash, sotib olish so'rovlari va huquqiy savollar Telegram orqali ko'rib chiqiladi.
+
+**Qo'llab-quvvatlash:** @Blootsupport  
+**Kanal:** https://t.me/blootapp  
+**Veb-sayt:** bloot.app
+
+---
+
+*Ushbu Foydalanish shartlari 2026-yil 19-aprel sanasida yangilangan.*

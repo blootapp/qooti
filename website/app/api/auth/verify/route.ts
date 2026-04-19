@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkCode, getCodeEntry, createRegistrationToken } from "@/lib/verification-codes";
+import { createRegistrationToken, verifyOtp } from "@/lib/verification-codes";
+
+export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   try {
@@ -16,28 +18,18 @@ export async function POST(request: NextRequest) {
     const purposeVal = purpose === "register" ? "register" : "login";
     const emailNorm = String(email).trim().toLowerCase();
     const codeNorm = String(code).trim().replace(/\D/g, "").slice(0, 6);
-    const entryBeforeCheck = getCodeEntry(emailNorm, purposeVal);
-    const valid = checkCode(emailNorm, codeNorm, purposeVal);
 
-    if (!valid && process.env.NODE_ENV === "development") {
-      console.log("[verify] failed", {
-        emailNorm,
-        purposeVal,
-        codeLen: codeNorm.length,
-        hasEntry: !!entryBeforeCheck,
-        expired: entryBeforeCheck ? Date.now() > entryBeforeCheck.expiresAt : null,
-      });
-    }
+    const result = await verifyOtp(emailNorm, codeNorm, purposeVal);
 
-    if (!valid) {
+    if (!result.ok) {
       return NextResponse.json(
         { error: "Invalid or expired code" },
         { status: 400 }
       );
     }
 
-    if (purposeVal === "register" && entryBeforeCheck?.profile) {
-      const registrationToken = createRegistrationToken(emailNorm, entryBeforeCheck.profile);
+    if (purposeVal === "register" && result.profile) {
+      const registrationToken = await createRegistrationToken(emailNorm, result.profile);
       return NextResponse.json({
         success: true,
         purpose: "register",

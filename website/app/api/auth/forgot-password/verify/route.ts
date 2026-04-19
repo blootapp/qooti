@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkCode, createPasswordResetToken } from "@/lib/verification-codes";
 
+export const runtime = "edge";
+
 export async function POST(request: NextRequest) {
   let body: { email?: string; code?: string };
   try {
@@ -13,8 +15,8 @@ export async function POST(request: NextRequest) {
   if (!email || !code) {
     return NextResponse.json({ error: "Email and code are required" }, { status: 400 });
   }
-  const valid = checkCode(email, code, "reset");
+  const valid = await checkCode(email, code, "reset");
   if (!valid) return NextResponse.json({ error: "Invalid or expired code" }, { status: 400 });
-  const passwordResetToken = createPasswordResetToken(email);
+  const passwordResetToken = await createPasswordResetToken(email);
   return NextResponse.json({ ok: true, passwordResetToken }, { status: 200 });
 }

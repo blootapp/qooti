@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteSession, getSessionCookieHeader, SESSION_COOKIE } from "@/lib/sessions";
+import { getSessionCookieHeader } from "@/lib/bloot-session";
 
-export async function POST(request: NextRequest) {
-  const token = request.cookies.get(SESSION_COOKIE)?.value;
-  deleteSession(token);
+export const runtime = "edge";
+
+export async function POST(_request: NextRequest) {
   const res = NextResponse.json({ success: true });
   res.headers.set("Set-Cookie", getSessionCookieHeader());
   return res;

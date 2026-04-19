@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSessionPayload, SESSION_COOKIE } from "./sessions";
+import { validateSessionPayload } from "./api-session";
+import { SESSION_COOKIE } from "./bloot-session";
 
-export function getRequiredSession() {
+export async function getRequiredSession() {
   const token = cookies().get(SESSION_COOKIE)?.value;
-  const payload = getSessionPayload(token);
+  const payload = await validateSessionPayload(token);
   if (!payload?.email) redirect("/login");
   return payload;
 }

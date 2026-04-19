@@ -8,11 +8,13 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "generate:seo-assets": "node scripts/generate-seo-assets.mjs"
+    "generate:seo-assets": "node scripts/generate-seo-assets.mjs",
+    "pages:build": "npx @cloudflare/next-on-pages",
+    "pages:dev": "wrangler pages dev .vercel/output/static --compatibility-flags=nodejs_compat"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^12.8.0",
+    "jose": "^6.2.2",
     "next": "^14.2.0",
     "next-intl": "^4.9.0",
     "react": "^18.2.0",
@@ -22,16 +24,17 @@
     "resend": "^4.0.0"
   },
   "devDependencies": {
-    "sharp": "^0.33.5",
+    "@cloudflare/next-on-pages": "^1.13.16",
     "@types/bcryptjs": "^2.4.6",
-    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20.0.0",
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "eslint": "^8.0.0",
     "eslint-config-next": "^14.2.0",
     "postcss": "^8.4.0",
+    "sharp": "^0.33.5",
     "tailwindcss": "^3.4.0",
-    "typescript": "^5.0.0"
+    "typescript": "^5.0.0",
+    "wrangler": "^4.83.0"
   }
 }

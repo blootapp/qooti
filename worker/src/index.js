@@ -8,6 +8,21 @@
  */
 
 import bcrypt from "bcryptjs";
+import { handleBlootInternalWebsiteRoutes } from "./bloot-internal-website.js";
+import {
+  checkLoginAllowed,
+  checkLoginIpAttemptBudget,
+  recordLoginFailure,
+  recordLoginSuccess,
+  checkRegistrationIp,
+  recordRegistrationSuccess,
+} from "./rate-limit-kv.js";
+
+/** Constant bcrypt hash for timing normalization when user is unknown (compare always runs bcrypt). */
+const DUMMY_PASSWORD_HASH =
+  "$2a$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36WQoeG6Lruj3vjPGga31";
+
+const LOGIN_ERROR_GENERIC = "Incorrect email or password";
 
 const LIFETIME_EXPIRY = 253402300799; // far future
 const LAST_SEEN_UPDATE_INTERVAL = 86400; // 24 hours
@@ -21,10 +36,10 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Secret, X-Internal-Secret",
 };
 
-function json(data, status = 200) {
+function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json", ...CORS },
+    headers: { "Content-Type": "application/json", ...CORS, ...extraHeaders },
   });
 }
 
@@ -255,6 +270,11 @@ export default {
         return deleteUserAccount(decodeURIComponent(matchUser[1]), env);
       }
       return json({ error: "Not found" }, 404);
+    }
+
+    if (path.startsWith("/bloot/internal/")) {
+      const websiteInternal = await handleBlootInternalWebsiteRoutes(request, env, path);
+      if (websiteInternal) return websiteInternal;
     }
 
     if (path === "/bloot/internal/register" && request.method === "POST") {
@@ -1273,8 +1293,22 @@ async function internalRegister(request, env) {
   if (!email || !passwordHash || !name || !surname || !username) {
     return json({ error: "Missing fields" }, 400);
   }
+
+  const forwarded = String(request.headers.get("X-Bloot-Client-Ip") || "").trim();
+  const registrationIp = forwarded || clientIp(request);
+  const regRl = await checkRegistrationIp(env, registrationIp);
+  if (!regRl.ok) {
+    return json(
+      { error: "Too many registration attempts. Try again later." },
+      429,
+      regRl.retryAfter ? { "Retry-After": String(regRl.retryAfter) } : {}
+    );
+  }
+
   const exists = await env.DB.prepare("SELECT 1 FROM users WHERE email = ?").bind(email).first();
-  if (exists) return json({ error: "Email taken" }, 409);
+  if (exists) {
+    return json({ error: "Registration could not be completed." }, 409);
+  }
   const id = crypto.randomUUID();
   let publicId = "";
   for (let i = 0; i < 8; i += 1) {
@@ -1293,7 +1327,7 @@ async function internalRegister(request, env) {
   const expiresAt = now + trialSec;
   try {
     await env.DB.prepare(
-      `INSERT INTO users (id, public_id, email, password_hash, name, surname, username, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO users (id, public_id, email, password_hash, name, surname, username, created_at, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`
     )
       .bind(id, publicId, email, passwordHash, name, surname, username, now)
       .run();
@@ -1306,8 +1340,16 @@ async function internalRegister(request, env) {
   } catch (e) {
     return json({ error: e.message || "Database error" }, 500);
   }
+  await recordRegistrationSuccess(env, regRl.key);
   await logAction(env, "bloot_user_registered", publicId, JSON.stringify({ email, internal_id: id }));
-  return json({ ok: true, blootUserId: publicId, email, name, surname, username });
+  return json({ ok: true, blootUserId: publicId, email, name, surname, username, passwordChangedAt: 0 });
+}
+
+function loginRateKeyFromIdentifier(identifier) {
+  const id = String(identifier || "").trim();
+  if (!id) return "unknown";
+  if (id.includes("@")) return normEmail(id);
+  return `u:${id.toLowerCase()}`;
 }
 
 async function blootLogin(request, env) {
@@ -1320,19 +1362,29 @@ async function blootLogin(request, env) {
   const identifier = String(body.identifier || body.email || "").trim();
   const password = String(body.password || "");
   if (!identifier || !password) return json({ error: "Email/username and password required" }, 400);
-  const email = normEmail(identifier);
+
+  const ip = clientIp(request);
+  const ipBudget = await checkLoginIpAttemptBudget(env, ip);
+  if (!ipBudget.ok) {
+    return json(
+      { error: "Too many login attempts. Try again later." },
+      429,
+      { "Retry-After": String(ipBudget.retryAfter || 900) }
+    );
+  }
+
   const uniqueRow = await env.DB.prepare(
-    `SELECT id, public_id, email, name, surname, username, password_hash
+    `SELECT id, public_id, email, name, surname, username, password_hash, password_changed_at
      FROM users
      WHERE LOWER(email) = ? OR LOWER(public_id) = ? OR id = ?
      LIMIT 1`
   )
-    .bind(email, identifier.toLowerCase(), identifier)
+    .bind(normEmail(identifier), identifier.toLowerCase(), identifier)
     .first();
   let row = uniqueRow;
   if (!row) {
     const byUsername = await env.DB.prepare(
-      `SELECT id, public_id, email, name, surname, username, password_hash
+      `SELECT id, public_id, email, name, surname, username, password_hash, password_changed_at
        FROM users
        WHERE LOWER(username) = ?
        LIMIT 2`
@@ -1341,13 +1393,45 @@ async function blootLogin(request, env) {
       .all();
     const rows = byUsername?.results || [];
     if (rows.length > 1) {
-      return json({ error: "Duplicate username found. Please login with email or Bloot ID." }, 409);
+      const logLine = JSON.stringify({
+        event: "login_failed_duplicate_username",
+        ip,
+        ts: Math.floor(Date.now() / 1000),
+      });
+      console.warn(logLine);
+      return json({ error: LOGIN_ERROR_GENERIC }, 401);
     }
     row = rows.length === 1 ? rows[0] : null;
   }
-  if (!row) return json({ error: "Invalid credentials" }, 401);
-  const ok = await bcrypt.compare(password, row.password_hash);
-  if (!ok) return json({ error: "Invalid credentials" }, 401);
+
+  const rateKey = row ? normEmail(row.email) : loginRateKeyFromIdentifier(identifier);
+  const gate = await checkLoginAllowed(env, rateKey, ip);
+  if (!gate.ok) {
+    const ra = gate.retryAfter || 60;
+    return json(
+      { error: "Too many login attempts. Try again later." },
+      429,
+      { "Retry-After": String(ra) }
+    );
+  }
+
+  const hashToCheck = row?.password_hash || DUMMY_PASSWORD_HASH;
+  const passwordOk = await bcrypt.compare(password, hashToCheck);
+
+  if (!row || !passwordOk) {
+    await recordLoginFailure(env, rateKey, gate.emailState, gate.ek, gate.t);
+    const logLine = JSON.stringify({
+      event: "login_failed",
+      ip,
+      ts: Math.floor(Date.now() / 1000),
+      bucket: rateKey,
+    });
+    console.warn(logLine);
+    return json({ error: LOGIN_ERROR_GENERIC }, 401);
+  }
+
+  await recordLoginSuccess(env, rateKey, ip);
+  const pwdTs = row.password_changed_at != null ? Number(row.password_changed_at) : 0;
   return json({
     ok: true,
     user: {
@@ -1356,6 +1440,7 @@ async function blootLogin(request, env) {
       name: row.name,
       surname: row.surname,
       username: row.username,
+      passwordChangedAt: pwdTs,
     },
   });
 }
@@ -1376,14 +1461,15 @@ async function internalResetPassword(request, env) {
   if (!email || !passwordHash) {
     return json({ error: "Missing fields" }, 400);
   }
+  const now = Math.floor(Date.now() / 1000);
   const existing = await env.DB.prepare("SELECT id FROM users WHERE email = ?")
     .bind(email)
     .first();
   if (!existing) {
-    return json({ error: "User not found" }, 404);
+    return json({ ok: true });
   }
-  await env.DB.prepare("UPDATE users SET password_hash = ? WHERE email = ?")
-    .bind(passwordHash, email)
+  await env.DB.prepare("UPDATE users SET password_hash = ?, password_changed_at = ?, updated_at = ? WHERE email = ?")
+    .bind(passwordHash, now, now, email)
     .run();
   await logAction(env, "bloot_password_reset", existing.id, JSON.stringify({ email }));
   return json({ ok: true });

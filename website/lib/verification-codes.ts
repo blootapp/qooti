@@ -1,4 +1,11 @@
-const EXPIRY_MS = 5 * 60 * 1000; // 5 minutes for email verification code
+import {
+  internalOtpSet,
+  internalOtpVerify,
+  internalSessionTokenConsume,
+  internalSessionTokenCreate,
+  internalSessionTokenRead,
+  isBlootInternalApiConfigured,
+} from "./bloot-internal-api";
 
 export interface RegisterProfile {
   name: string;
@@ -6,137 +13,118 @@ export interface RegisterProfile {
   username: string;
 }
 
-export interface VerificationEntry {
-  code: string;
-  email: string;
-  expiresAt: number;
-  profile?: RegisterProfile;
-}
-
 type VerificationPurpose = "login" | "register" | "reset";
 
-// Use global so the same store is shared across HMR and module re-runs (fixes verify 400 when store was empty)
-const globalForStore = globalThis as unknown as { __verificationStore?: Map<string, VerificationEntry> };
-const store = globalForStore.__verificationStore ?? new Map<string, VerificationEntry>();
-if (!globalForStore.__verificationStore) globalForStore.__verificationStore = store;
-
-function key(email: string, purpose: string) {
-  return `${purpose}:${email.toLowerCase().trim()}`;
+function purposeToApi(purpose: VerificationPurpose): "login" | "register" | "reset" {
+  if (purpose === "reset") return "reset";
+  if (purpose === "register") return "register";
+  return "login";
 }
 
-export function setCode(
+export async function setCode(
   email: string,
   code: string,
   purpose: VerificationPurpose = "login",
   profile?: RegisterProfile
-): void {
-  const k = key(email, purpose);
-  store.set(k, {
+): Promise<void> {
+  if (!isBlootInternalApiConfigured()) {
+    throw new Error("BLOOT_API_URL and BLOOT_INTERNAL_SECRET must be set for verification.");
+  }
+  const emailNorm = email.toLowerCase().trim();
+  const ok = await internalOtpSet({
+    email: emailNorm,
+    purpose: purposeToApi(purpose),
     code,
-    email: email.toLowerCase().trim(),
-    expiresAt: Date.now() + EXPIRY_MS,
-    ...(purpose === "register" && profile && { profile }),
-    });
+    ...(purpose === "register" && profile ? { profile: { ...profile } as Record<string, unknown> } : {}),
+  });
+  if (!ok) throw new Error("Could not store verification code.");
 }
 
-export function getProfile(email: string, purpose: "login" | "register" = "login"): RegisterProfile | null {
-  const k = key(email, purpose);
-  const entry = store.get(k);
-  return entry?.profile ?? null;
-}
-
-export function getCodeEntry(
+export async function verifyOtp(
   email: string,
-  purpose: VerificationPurpose = "login"
-): VerificationEntry | null {
-  const k = key(email, purpose);
-  return store.get(k) ?? null;
+  code: string,
+  purpose: VerificationPurpose
+): Promise<{ ok: boolean; profile?: RegisterProfile | null }> {
+  if (!isBlootInternalApiConfigured()) return { ok: false };
+  const codeNorm = String(code).trim().replace(/\D/g, "").slice(0, 6);
+  const r = await internalOtpVerify({
+    email: email.trim().toLowerCase(),
+    purpose: purposeToApi(purpose),
+    code: codeNorm,
+  });
+  if (!r.ok) return { ok: false };
+  let profile: RegisterProfile | null = null;
+  if (r.profile && typeof r.profile === "object") {
+    const p = r.profile as Record<string, unknown>;
+    profile = {
+      name: String(p.name ?? ""),
+      surname: String(p.surname ?? ""),
+      username: String(p.username ?? ""),
+    };
+  }
+  return { ok: true, profile };
 }
 
-export function checkCode(
+export async function checkCode(
   email: string,
   code: string,
   purpose: VerificationPurpose = "login"
-): boolean {
-  const k = key(email, purpose);
-  const entry = store.get(k);
-  if (!entry) return false;
-  if (Date.now() > entry.expiresAt) {
-    store.delete(k);
-    return false;
-  }
-  const ok = entry.code === code;
-  if (ok) store.delete(k);
+): Promise<boolean> {
+  const { ok } = await verifyOtp(email, code, purpose);
   return ok;
 }
 
-// One-time token issued after email verification for register; allows completing signup with password
-const REGISTRATION_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
+export async function createRegistrationToken(email: string, profile: RegisterProfile): Promise<string> {
+  if (!isBlootInternalApiConfigured()) {
+    throw new Error("BLOOT_API_URL and BLOOT_INTERNAL_SECRET must be set.");
+  }
+  const r = await internalSessionTokenCreate({
+    kind: "register",
+    email: email.trim().toLowerCase(),
+    profile: { ...profile } as Record<string, unknown>,
+  });
+  if (!r.ok) throw new Error("Could not create registration token");
+  return r.token;
+}
 
-interface RegistrationTokenData {
+export async function getRegistrationToken(token: string): Promise<{
   email: string;
   profile: RegisterProfile;
   expiresAt: number;
+} | null> {
+  if (!isBlootInternalApiConfigured()) return null;
+  const r = await internalSessionTokenRead(token);
+  if (!r.ok || r.kind !== "register" || !r.email) return null;
+  const prof = r.profile as RegisterProfile | undefined;
+  if (!prof?.username) return null;
+  return {
+    email: r.email,
+    profile: prof,
+    expiresAt: Date.now() + 10 * 60 * 1000,
+  };
 }
 
-interface PasswordResetTokenData {
-  email: string;
-  expiresAt: number;
+export async function consumeRegistrationToken(token: string): Promise<void> {
+  await internalSessionTokenConsume(token);
 }
 
-const globalForRegTokens = globalThis as unknown as { __registrationTokens?: Map<string, RegistrationTokenData> };
-const regTokenStore = globalForRegTokens.__registrationTokens ?? new Map<string, RegistrationTokenData>();
-if (!globalForRegTokens.__registrationTokens) globalForRegTokens.__registrationTokens = regTokenStore;
-
-const globalForResetTokens = globalThis as unknown as { __passwordResetTokens?: Map<string, PasswordResetTokenData> };
-const resetTokenStore = globalForResetTokens.__passwordResetTokens ?? new Map<string, PasswordResetTokenData>();
-if (!globalForResetTokens.__passwordResetTokens) globalForResetTokens.__passwordResetTokens = resetTokenStore;
-
-function randomToken(): string {
-  return Array.from(crypto.getRandomValues(new Uint8Array(24)))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-export function createRegistrationToken(email: string, profile: RegisterProfile): string {
-  const token = randomToken();
-  regTokenStore.set(token, {
+export async function createPasswordResetToken(email: string): Promise<string> {
+  if (!isBlootInternalApiConfigured()) {
+    throw new Error("BLOOT_API_URL and BLOOT_INTERNAL_SECRET must be set.");
+  }
+  const r = await internalSessionTokenCreate({
+    kind: "reset",
     email: email.trim().toLowerCase(),
-    profile,
-    expiresAt: Date.now() + REGISTRATION_TOKEN_TTL_MS,
   });
-  return token;
+  if (!r.ok) throw new Error("Could not create reset token");
+  return r.token;
 }
 
-export function getRegistrationToken(token: string): RegistrationTokenData | null {
-  const data = regTokenStore.get(token);
-  if (!data || Date.now() > data.expiresAt) return null;
-  return data;
-}
-
-export function consumeRegistrationToken(token: string): void {
-  regTokenStore.delete(token);
-}
-
-export function getAndConsumeRegistrationToken(token: string): RegistrationTokenData | null {
-  const data = regTokenStore.get(token);
-  regTokenStore.delete(token);
-  if (!data || Date.now() > data.expiresAt) return null;
-  return data;
-}
-
-export function createPasswordResetToken(email: string): string {
-  const token = randomToken();
-  resetTokenStore.set(token, {
-    email: email.trim().toLowerCase(),
-    expiresAt: Date.now() + REGISTRATION_TOKEN_TTL_MS,
-  });
-  return token;
-}
-
-export function getAndConsumePasswordResetToken(token: string): PasswordResetTokenData | null {
-  const data = resetTokenStore.get(token);
-  resetTokenStore.delete(token);
-  if (!data || Date.now() > data.expiresAt) return null;
-  return data;
+export async function getAndConsumePasswordResetToken(
+  token: string
+): Promise<{ email: string; expiresAt: number } | null> {
+  if (!isBlootInternalApiConfigured()) return null;
+  const r = await internalSessionTokenConsume(token);
+  if (!r.ok || r.kind !== "reset" || !r.email) return null;
+  return { email: r.email, expiresAt: Date.now() + 60_000 };
 }

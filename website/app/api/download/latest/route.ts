@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getLatestReleaseAsset } from "@/lib/download-github";
 
 export const dynamic = "force-dynamic";
+export const runtime = "edge";
 
 export async function GET(request: NextRequest) {
   const platform = request.nextUrl.searchParams.get("platform");

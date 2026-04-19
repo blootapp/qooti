@@ -4,6 +4,8 @@ import { blootCodeEmailSubject, buildBlootCodeEmailHtml } from "@/lib/email/bloo
 import { getResendFromEmail, getResendReplyTo } from "@/lib/email/resend-from";
 import { setCode } from "@/lib/verification-codes";
 
+export const runtime = "edge";
+
 export async function POST(request: NextRequest) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
@@ -51,7 +53,7 @@ export async function POST(request: NextRequest) {
       purposeVal === "register" && username
         ? { name: username.trim(), surname: "User", username: username.trim() }
         : undefined;
-    setCode(emailNorm, code, purposeVal, profile);
+    await setCode(emailNorm, code, purposeVal, profile);
 
     const { data, error } = await resend.emails.send({
       from: getResendFromEmail(),
