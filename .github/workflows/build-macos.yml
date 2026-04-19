@@ -12,6 +12,8 @@ env:
 jobs:
   build:
     runs-on: macos-latest
+    # Avoid premature cancellation during long universal macOS builds (cold compile can exceed several minutes).
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -26,6 +28,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Download yt-dlp binary
         shell: bash
