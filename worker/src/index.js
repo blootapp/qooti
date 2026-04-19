@@ -549,28 +549,27 @@ async function validateLicense(request, env) {
   let countRow;
   try {
     countRow = await env.DB.prepare(
-      "SELECT COUNT(*) as c FROM license_devices WHERE license_key = ?"
+      "SELECT COUNT(*) as deviceCount FROM license_devices WHERE license_key = ?"
     )
       .bind(licenseKey)
       .first();
   } catch (_) {
-    countRow = { c: 0 };
+    countRow = { deviceCount: 0 };
   }
-  const limit = row.device_limit || 1;
-  let count = countRow?.c ?? 0;
+  const deviceCount = Number(countRow?.deviceCount ?? 0);
 
-  // `license_devices` is canonical. If it has no rows, legacy `licenses.active_devices` JSON
-  // must not enforce limits — it often stays stale after admin "reset devices" (rows deleted,
-  // JSON not cleared), which incorrectly returned "Device limit reached".
-  if (count === 0) {
-    try {
-      await env.DB.prepare(
-        "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
-      )
-        .bind(licenseKey)
-        .run();
-    } catch (_) {}
+  // Auto-heal — if license_devices table is empty but active_devices JSON
+  // still has entries, clear the JSON to prevent false device limit errors
+  if (deviceCount === 0) {
+    await env.DB.prepare(
+      "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
+    )
+      .bind(licenseKey)
+      .run();
   }
+
+  const limit = row.device_limit || 1;
+  let count = deviceCount;
 
   // Single-seat licenses: the slot may hold a *different* fingerprint (reinstall, cleared prefs,
   // new local device_id). Replace that row instead of hard-failing "Device limit reached".
@@ -1117,14 +1116,14 @@ async function deleteLicense(licenseKey, env) {
 }
 
 async function resetDevices(licenseKey, env) {
+  // Step 1 — clear license_devices table
   await env.DB.prepare(
     "DELETE FROM license_devices WHERE license_key = ?"
   )
     .bind(licenseKey)
     .run();
 
-  // Must clear legacy JSON too: validateLicense() falls back to `licenses.active_devices`
-  // when license_devices is empty; stale entries here caused "Device limit reached" after reset.
+  // Step 2 — clear active_devices JSON column on licenses (both steps required)
   await env.DB.prepare(
     "UPDATE licenses SET active_devices = '[]' WHERE license_key = ?"
   )
