@@ -3406,8 +3406,12 @@ const DEFAULT_LICENSE_API_URL: &str = concat!(
     ".workers.dev"
 );
 const COMPILED_LICENSE_API_URL: Option<&str> = option_env!("QOOTI_LICENSE_API_URL");
-const LICENSE_RESPONSE_SIGNING_SECRET: Option<&str> =
+/// HMAC secret for `/license/validate` JSON `signature` (must match Worker `LICENSE_RESPONSE_SIGNING_SECRET`).
+/// Accept either name so release builds can reuse the same env as the Worker.
+const LICENSE_RESPONSE_SIGNING_SECRET_FROM_QOOTI: Option<&str> =
     option_env!("QOOTI_LICENSE_RESPONSE_SIGNING_SECRET");
+const LICENSE_RESPONSE_SIGNING_SECRET_FROM_WORKER_NAME: Option<&str> =
+    option_env!("LICENSE_RESPONSE_SIGNING_SECRET");
 const MAX_OFFLINE_CACHE_GRACE_SECONDS: i64 = 72 * 60 * 60;
 
 const LICENSE_CACHE_ID: i32 = 1;
@@ -3813,7 +3817,8 @@ fn configured_license_api_base() -> String {
 }
 
 fn license_signature_secret() -> Option<&'static str> {
-    LICENSE_RESPONSE_SIGNING_SECRET
+    LICENSE_RESPONSE_SIGNING_SECRET_FROM_QOOTI
+        .or(LICENSE_RESPONSE_SIGNING_SECRET_FROM_WORKER_NAME)
         .map(str::trim)
         .filter(|s| !s.is_empty())
 }

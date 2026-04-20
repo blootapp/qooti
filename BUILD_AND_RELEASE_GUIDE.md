@@ -60,6 +60,26 @@ cmd /c "set TAURI_SIGNING_PRIVATE_KEY=C:\Users\Windows 11\.tauri\qooti.key&& set
 
 Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the shell **before** running the line above, or substitute a secure value for the placeholder—**do not** paste passwords into committed docs or source files.
 
+### License HMAC (required for release activation)
+
+Release builds **embed** the Worker’s license response signing secret at compile time. If it is missing, activation fails with *“License signature verification is not configured.”*
+
+Set **either** env var to the **same value** as the Worker’s `LICENSE_RESPONSE_SIGNING_SECRET` (Cloudflare / Wrangler), then run `tauri build`:
+
+- `QOOTI_LICENSE_RESPONSE_SIGNING_SECRET`, or
+- `LICENSE_RESPONSE_SIGNING_SECRET` (same name as the Worker).
+
+Example (PowerShell):
+
+```powershell
+$env:LICENSE_RESPONSE_SIGNING_SECRET = "<paste Worker secret>"
+$env:TAURI_SIGNING_PRIVATE_KEY = "D:\keys\.tauri\qooti.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "<password>"
+npm run tauri build -- --bundles nsis
+```
+
+Debug/dev builds skip verification when the secret is absent; **release builds do not.**
+
 ## What we did for v0.1.0 (working path)
 
 This is the exact path that worked after debugging CI failures:
