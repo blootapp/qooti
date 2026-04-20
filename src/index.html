@@ -460,7 +460,10 @@
               </div>
               <div class="collections-header__meta">
                 <span id="collectionsCount" class="collections-header__count" aria-live="polite"></span>
-                <input type="search" id="collectionsSearch" class="collections-header__search" data-i18n-placeholder="collectionsView.searchPlaceholder" placeholder="Search collections…" data-i18n-aria-label="collectionsView.searchPlaceholder" aria-label="Search collections" />
+                <label class="collections-header__search-wrap" for="collectionsSearch">
+                  <span class="ui-icon collections-header__search-icon" style="--icon-url:url('./assets/icons/remix/search-line.svg')" aria-hidden="true"></span>
+                  <input type="search" id="collectionsSearch" class="collections-header__search" data-i18n-placeholder="collectionsView.searchPlaceholder" placeholder="Search collections…" data-i18n-aria-label="collectionsView.searchPlaceholder" aria-label="Search collections" />
+                </label>
                 <button id="collectionsImportBtn" type="button" class="btn btn--secondary collections-header__import" data-i18n="collectionsView.importPack">Import Pack</button>
                 <button id="collectionsCreateBtn" type="button" class="btn btn--primary collections-header__create" data-i18n="collectionsView.createCollection">Create Collection</button>
               </div>

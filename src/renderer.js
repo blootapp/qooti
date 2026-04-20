@@ -58,6 +58,21 @@ function extractCssUrl(value) {
   return m ? String(m[2] || "").trim() : text;
 }
 
+/** Prefer document-relative URL first (matches Tauri when page is under /src/), then site-root /assets/. */
+function iconHrefCandidates(rest) {
+  const r = String(rest || "").replace(/^\/+/, "");
+  if (!r) return [];
+  const out = [];
+  try {
+    out.push(new URL(`./assets/icons/${r}`, document.baseURI).href);
+  } catch (_) {}
+  try {
+    out.push(new URL(`/assets/icons/${r}`, document.baseURI).href);
+  } catch (_) {}
+  if (out.length === 0) out.push(`/assets/icons/${r}`);
+  return out;
+}
+
 function resolveIconImgHref(pathLike) {
   let raw = String(pathLike || "").trim();
   if (!raw) return "";
@@ -66,12 +81,8 @@ function resolveIconImgHref(pathLike) {
 
   const tail = raw.match(/assets\/icons\/(.+)$/i);
   if (tail) {
-    const rest = tail[1].replace(/^\/+/, "");
-    try {
-      return new URL(`/assets/icons/${rest}`, document.baseURI).href;
-    } catch {
-      return `/assets/icons/${rest}`;
-    }
+    const c = iconHrefCandidates(tail[1]);
+    return c[0] || raw;
   }
 
   try {
@@ -79,6 +90,17 @@ function resolveIconImgHref(pathLike) {
   } catch {
     return raw;
   }
+}
+
+function readIconUrlFromElement(el) {
+  let inlineVar = String(el.style?.getPropertyValue("--icon-url") || "").trim();
+  if (!inlineVar) {
+    const attr = el.getAttribute("style") || "";
+    const m = attr.match(/--icon-url\s*:\s*([^;]+)/i);
+    if (m) inlineVar = m[1].trim();
+  }
+  const computedVar = String(getComputedStyle(el).getPropertyValue("--icon-url") || "").trim();
+  return inlineVar || computedVar;
 }
 
 function normalizeIconImgPath(el) {
@@ -91,13 +113,12 @@ function normalizeIconImgPath(el) {
 
 function hydrateUiIcon(el) {
   if (!el || !el.classList?.contains("ui-icon")) return;
-  const inlineVar = String(el.style?.getPropertyValue("--icon-url") || "").trim();
-  const computedVar = String(getComputedStyle(el).getPropertyValue("--icon-url") || "").trim();
-  const rawUrl = extractCssUrl(inlineVar || computedVar);
+  const rawUrl = extractCssUrl(readIconUrlFromElement(el));
   if (!rawUrl) return;
 
-  const href = resolveIconImgHref(rawUrl);
-  if (!href) return;
+  const tail = rawUrl.match(/assets\/icons\/(.+)$/i);
+  const candidates = tail ? iconHrefCandidates(tail[1]) : [resolveIconImgHref(rawUrl)].filter(Boolean);
+  if (candidates.length === 0) return;
 
   el.style.setProperty("-webkit-mask-image", "none");
   el.style.setProperty("mask-image", "none");
@@ -112,7 +133,22 @@ function hydrateUiIcon(el) {
     img.decoding = "async";
     el.appendChild(img);
   }
-  if (img.getAttribute("src") !== href) img.setAttribute("src", href);
+
+  const applySrc = (idx) => {
+    const href = candidates[idx];
+    if (!href) return;
+    img.setAttribute("src", href);
+    if (idx + 1 < candidates.length) {
+      const next = idx + 1;
+      const fail = () => {
+        img.removeEventListener("error", fail);
+        applySrc(next);
+      };
+      img.addEventListener("error", fail, { once: true });
+    }
+  };
+  const primary = img.getAttribute("src");
+  if (!primary || !candidates.includes(primary)) applySrc(0);
 }
 
 function hydrateUiIconsWithin(root = document) {

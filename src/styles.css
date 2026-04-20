@@ -1131,6 +1131,10 @@ html[data-theme="light"] .topbar__divider {
   max-height: min(74vh, 640px);
   overflow: auto;
   z-index: 100050;
+  /* WebView2: backdrop-filter + scroll can composite incorrectly; isolate stacking */
+  isolation: isolate;
+  transform: translateZ(0);
+  background: color-mix(in srgb, var(--glass-bg) 92%, rgba(10, 10, 12, 0.98));
 }
 
 /* Collections dropdown (navbar) – same as profileDropdown / Apple Glass */
@@ -6266,10 +6270,26 @@ html[data-theme="light"] .app--collections-open {
   letter-spacing: 0.02em;
 }
 
+.collections-header__search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.collections-header__search-icon {
+  position: absolute;
+  left: 10px;
+  width: 14px;
+  height: 14px;
+  color: var(--muted2);
+  pointer-events: none;
+}
+
 .collections-header__search {
   width: 250px;
   height: 36px;
-  padding: 0 12px;
+  padding: 0 12px 0 32px;
   border-radius: 9px;
   border: 1px solid var(--field-border);
   background: var(--field-bg);
