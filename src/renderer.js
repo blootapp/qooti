@@ -48,22 +48,87 @@ const DEFAULT_UNSORTED_COLLECTION_ID = "qooti-unsorted-default";
 
 /**
  * WebView compatibility fallback:
- * Some production runtimes fail to apply mask-image when URL is provided via
- * CSS var(), e.g. -webkit-mask-image: var(--icon-url). We keep existing markup
- * and mirror --icon-url into direct mask-image properties at runtime.
+ * - Some production runtimes fail to apply mask-image when URL is passed via var().
+ * - Production path roots can differ from dev URL roots.
+ * Keep existing markup but normalize icon URLs and mirror them into direct mask-image.
  */
+let ICONS_BASE_PATH = "/src/assets/icons";
+const ICONS_SENTINEL = "remix/arrow-right-line.svg";
+
+function extractCssUrl(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  const m = text.match(/^url\((['"]?)(.*?)\1\)$/i);
+  return m ? String(m[2] || "").trim() : text;
+}
+
+function toCssUrl(path) {
+  const text = String(path || "").trim();
+  if (!text) return "";
+  return `url("${text.replace(/"/g, "%22")}")`;
+}
+
+function normalizeIconPath(pathLike) {
+  const raw = String(pathLike || "").trim();
+  if (!raw) return "";
+  if (/^(data:|blob:|https?:|tauri:|asset:)/i.test(raw)) return raw;
+
+  const marker = "assets/icons/";
+  const markerIndex = raw.indexOf(marker);
+  if (markerIndex >= 0) {
+    const suffix = raw.slice(markerIndex + marker.length).replace(/^\/+/, "");
+    if (suffix) return `${ICONS_BASE_PATH.replace(/\/+$/, "")}/${suffix}`;
+  }
+
+  try {
+    return new URL(raw, document.baseURI).toString();
+  } catch {
+    return raw;
+  }
+}
+
+function normalizeIconImgPath(el) {
+  if (!el || el.tagName !== "IMG") return;
+  const srcAttr = String(el.getAttribute("src") || "").trim();
+  if (!srcAttr || srcAttr.includes("/icons/") === false) return;
+  const normalized = normalizeIconPath(srcAttr);
+  if (normalized && normalized !== srcAttr) {
+    el.setAttribute("src", normalized);
+  }
+}
+
 function applyMaskIconFallback(el) {
   if (!el || !el.classList?.contains("ui-icon")) return;
-  const inlineIconUrl = String(el.style?.getPropertyValue("--icon-url") || "").trim();
-  const resolvedIconUrl = inlineIconUrl || String(getComputedStyle(el).getPropertyValue("--icon-url") || "").trim();
-  if (!resolvedIconUrl) return;
-  el.style.webkitMaskImage = resolvedIconUrl;
-  el.style.maskImage = resolvedIconUrl;
+  const inlineVar = String(el.style?.getPropertyValue("--icon-url") || "").trim();
+  const computedVar = String(getComputedStyle(el).getPropertyValue("--icon-url") || "").trim();
+  const currentMask = String(el.style?.webkitMaskImage || el.style?.maskImage || "").trim();
+  const rawUrl = extractCssUrl(inlineVar || computedVar || currentMask);
+  if (!rawUrl) return;
+  const normalized = normalizeIconPath(rawUrl);
+  const cssUrl = toCssUrl(normalized);
+  if (!cssUrl) return;
+  el.style.webkitMaskImage = cssUrl;
+  el.style.maskImage = cssUrl;
 }
 
 function applyMaskIconFallbackWithin(root = document) {
   if (!root?.querySelectorAll) return;
   root.querySelectorAll(".ui-icon").forEach((el) => applyMaskIconFallback(el));
+  root.querySelectorAll("img[src*='assets/icons/']").forEach((el) => normalizeIconImgPath(el));
+}
+
+async function detectWorkingIconBasePath() {
+  const candidates = ["/src/assets/icons", "/assets/icons", "./assets/icons"];
+  for (const candidate of candidates) {
+    const testUrl = `${candidate.replace(/\/+$/, "")}/${ICONS_SENTINEL}`;
+    try {
+      const res = await fetch(testUrl, { cache: "no-store" });
+      if (res.ok) {
+        ICONS_BASE_PATH = candidate.replace(/\/+$/, "");
+        return;
+      }
+    } catch (_) {}
+  }
 }
 
 function startMaskIconFallbackObserver() {
@@ -73,12 +138,14 @@ function startMaskIconFallbackObserver() {
     for (const mutation of mutations) {
       if (mutation.type === "attributes" && mutation.target instanceof Element) {
         applyMaskIconFallback(mutation.target);
+        normalizeIconImgPath(mutation.target);
         continue;
       }
       if (mutation.type !== "childList") continue;
       for (const node of mutation.addedNodes) {
         if (!(node instanceof Element)) continue;
         if (node.classList?.contains("ui-icon")) applyMaskIconFallback(node);
+        normalizeIconImgPath(node);
         applyMaskIconFallbackWithin(node);
       }
     }
@@ -87,11 +154,14 @@ function startMaskIconFallbackObserver() {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["style", "class"],
+    attributeFilter: ["style", "class", "src"],
   });
 }
 
 startMaskIconFallbackObserver();
+detectWorkingIconBasePath().then(() => {
+  applyMaskIconFallbackWithin(document);
+});
 
 /** Strengthen home-feed recommendations after items are added to a collection (uses tags + type on the item). */
 function recordEngagementAfterCollectionAdd(itemOrIds) {
