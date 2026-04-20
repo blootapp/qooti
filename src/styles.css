@@ -951,20 +951,27 @@ html[data-theme="light"] .topbar__divider {
 }
 
 .ui-icon {
+  position: relative;
   width: 16px;
   height: 16px;
   display: inline-block;
   flex-shrink: 0;
   vertical-align: middle;
-  background-color: currentColor;
-  -webkit-mask-image: var(--icon-url);
-  mask-image: var(--icon-url);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  mask-size: contain;
+  background-color: transparent;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+/* Real <img> injected by renderer.js — avoids WebView SVG mask bugs */
+.ui-icon__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  filter: var(--icon-filter);
+  pointer-events: none;
 }
 
 .ui-icon--sm {
@@ -3995,34 +4002,30 @@ html[data-theme="light"] #tagFilterRecent.tag-filter-pill.is-active:hover {
   display: block;
 }
 
-/* SVG mask icons (currentColor tinted) */
+/* Icon spans — background + filter (more reliable than mask-image in WebView) */
 .add-surface__import-icon--media,
 .add-surface__import-icon--telegram,
 .add-surface__import-icon--notion {
   width: 15px;
   height: 15px;
-  background-color: var(--muted);
-  mask-repeat: no-repeat;
-  mask-position: center;
-  mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  -webkit-mask-size: contain;
+  background-color: transparent;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  filter: var(--icon-filter);
+  opacity: 0.9;
 }
 
 .add-surface__import-icon--media {
-  mask-image: url("./assets/icons/remix/image-line.svg");
-  -webkit-mask-image: url("./assets/icons/remix/image-line.svg");
+  background-image: url("/assets/icons/remix/image-line.svg");
 }
 
 .add-surface__import-icon--telegram {
-  mask-image: url("./assets/icons/remix/telegram.svg");
-  -webkit-mask-image: url("./assets/icons/remix/telegram.svg");
+  background-image: url("/assets/icons/remix/telegram.svg");
 }
 
 .add-surface__import-icon--notion {
-  mask-image: url("./assets/icons/remix/notion-fill.svg");
-  -webkit-mask-image: url("./assets/icons/remix/notion-fill.svg");
+  background-image: url("/assets/icons/remix/notion-fill.svg");
 }
 
 /* PNG icon — actual image, no mask */
@@ -9086,21 +9089,9 @@ html:not([data-theme="light"]) .survey-library__bar {
   filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.16));
 }
 
+/* Icon uses .ui-icon__img from renderer; mask ::before breaks in packaged WebView */
 .settings-coming__icon::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background-color: currentColor;
-  -webkit-mask-image: var(--icon-url);
-  mask-image: var(--icon-url);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  mask-size: contain;
-  transform: scale(1.08);
-  opacity: 0.9;
+  display: none;
 }
 
 .settings-coming__title {
