@@ -11,6 +11,25 @@ const srcAssets = path.join(projectRoot, "src", "assets");
 const rootAssets = path.join(projectRoot, "assets");
 const vendorDir = path.join(projectRoot, "src", "vendor");
 
+function copyDirFilesRecursive(srcDir, destDir) {
+  if (!fs.existsSync(srcDir)) return 0;
+  fs.mkdirSync(destDir, { recursive: true });
+  let copied = 0;
+  for (const entry of fs.readdirSync(srcDir, { withFileTypes: true })) {
+    const srcPath = path.join(srcDir, entry.name);
+    const destPath = path.join(destDir, entry.name);
+    if (entry.isDirectory()) {
+      copied += copyDirFilesRecursive(srcPath, destPath);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.copyFileSync(srcPath, destPath);
+    copied += 1;
+  }
+  return copied;
+}
+
 if (!fs.existsSync(rootAssets)) {
   console.log("[copy-assets] No assets folder, skipping");
   process.exit(0);
@@ -40,6 +59,14 @@ if (fs.existsSync(iconsDir)) {
     }
     console.log("[copy-assets] Copied icons/flaticon");
   }
+}
+
+// Keep root assets/icons in sync with frontend icon paths.
+// Production bundles resolve many icon URLs from ./assets/icons/*.
+const srcIconsDir = path.join(srcAssets, "icons");
+if (fs.existsSync(srcIconsDir)) {
+  const copiedIcons = copyDirFilesRecursive(srcIconsDir, iconsDir);
+  console.log(`[copy-assets] Synced src/assets/icons -> assets/icons (${copiedIcons} files)`);
 }
 
 fs.mkdirSync(vendorDir, { recursive: true });
