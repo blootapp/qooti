@@ -47,6 +47,18 @@ function corsPreflight() {
   return new Response(null, { status: 204, headers: CORS });
 }
 
+/** Strip trailing slash (except "/") and normalize /license/* to lowercase so /License/validate/ still matches. */
+function normalizeRoutingPathname(pathname) {
+  let p = pathname || "/";
+  if (p.length > 1 && p.endsWith("/")) {
+    p = p.slice(0, -1);
+  }
+  if (p.toLowerCase().startsWith("/license")) {
+    return p.toLowerCase();
+  }
+  return p;
+}
+
 function deriveStatus(row) {
   const now = Math.floor(Date.now() / 1000);
   if (row.revoked_at != null) return "revoked";
@@ -199,7 +211,8 @@ export default {
     if (request.method === "OPTIONS") return corsPreflight();
 
     const url = new URL(request.url);
-    const path = url.pathname;
+    const path = normalizeRoutingPathname(url.pathname);
+    console.log(`[worker] ${request.method} ${path}`);
     if (path === "/license/validate" || path === "/license/status") {
       const allowed = enforceRateLimit(
         request,
@@ -297,6 +310,19 @@ export default {
     }
     if (path === "/app/notifications" && request.method === "GET") {
       return listNotifications(url.searchParams, env, { allowInactive: false });
+    }
+
+    if (path === "/license/validate" || path === "/license/status") {
+      return json(
+        {
+          error: "Method not allowed",
+          allowed:
+            path === "/license/validate"
+              ? "POST /license/validate"
+              : "GET /license/status",
+        },
+        405
+      );
     }
 
     return json({ error: "Not found" }, 404);

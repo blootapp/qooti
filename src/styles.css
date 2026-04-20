@@ -10861,11 +10861,12 @@ html[data-theme="light"] .feedback-modal__attach-link {
   pointer-events: none;
 }
 
+/* Store onboarding footer row: [language] [feedback FAB] [toast when visible] … [Get started] */
 #app.app--store-onboarding ~ .feedback-fab {
   bottom: 24px;
-  left: 50%;
+  left: calc(24px + 100px + 12px);
   right: auto;
-  transform: translateX(-50%);
+  transform: none;
   width: 32px;
   height: 32px;
   border-radius: 8px;
@@ -10877,11 +10878,23 @@ html[data-theme="light"] .feedback-modal__attach-link {
 #app.app--store-onboarding ~ .feedback-fab:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.14);
-  transform: translateX(-50%) scale(1.03);
+  transform: scale(1.03);
 }
 
 #app.app--store-onboarding ~ .feedback-fab:active {
-  transform: translateX(-50%) scale(0.98);
+  transform: scale(0.98);
+}
+
+/* Toast to the right of the FAB (32px) so it does not cover the headset button */
+#app.app--store-onboarding ~ #toast.toast {
+  left: calc(24px + 100px + 12px + 32px + 12px);
+  right: auto;
+  transform: translate(0, 16px);
+  max-width: min(360px, calc(100vw - 24px - 200px - 160px));
+}
+
+#app.app--store-onboarding ~ #toast.toast.visible {
+  transform: translate(0, 0);
 }
 
 #app.app--store-onboarding ~ .feedback-fab .feedback-fab__icon {
@@ -11504,7 +11517,14 @@ html[data-theme="light"] .feedback-modal__attach-link {
   }
 
   #app.app--store-onboarding ~ .feedback-fab {
+    left: calc(14px + 96px + 10px);
     bottom: 14px;
+  }
+
+  #app.app--store-onboarding ~ #toast.toast {
+    left: calc(14px + 96px + 10px + 32px + 10px);
+    bottom: 14px;
+    max-width: min(360px, calc(100vw - 14px - 140px - 120px));
   }
 
   /* Single-banner fallback for very narrow/minimized frames. */

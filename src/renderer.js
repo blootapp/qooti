@@ -1760,6 +1760,8 @@ function getLicenseStatusMessage(result, lang = state.settings?.language || "en"
   if (status === "expired") return t("license.expired", lang);
   if (status === "device_limit") return t("license.deviceLimit", lang);
   if (status === "network_error") return t("license.networkUnavailable", lang);
+  // Signature mismatch, bad JSON, or misconfigured client secret — not a generic offline message
+  if (status === "activation_error" && result?.error) return result.error;
   return result?.error || t("license.invalid", lang);
 }
 
@@ -13041,6 +13043,7 @@ function shouldApplyLicenseActivationPenalty(result) {
     "device_limit",
     "device_blocked",
     "network_error",
+    "activation_error",
     "offline_cache",
     "revoked",
     "expired",

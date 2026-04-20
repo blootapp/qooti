@@ -19,3 +19,4 @@ src-tauri/resources/
 
 # Local release staging (installers, latest.json for manual upload to qooti-releases)
 release-assets/
+last-v*/

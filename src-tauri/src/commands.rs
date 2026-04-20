@@ -9,6 +9,7 @@ use log::{debug, error, info, warn};
 
 use rusqlite::{Connection, OptionalExtension};
 use rusqlite::types::Value as SqlValue;
+use url::Url;
 
 /// Per-command timing: start at `debug!`, finish at `info!`, `warn!` if slow (>500ms).
 macro_rules! cmd_log {
@@ -3058,7 +3059,7 @@ pub async fn list_notifications(
     ) -> Result<Option<Vec<NotificationRow>>, String> {
         let api_base = std::env::var("QOOTI_LICENSE_API_URL")
             .unwrap_or_else(|_| DEFAULT_LICENSE_API_URL.to_string());
-        let api_base = api_base.trim().trim_end_matches('/');
+        let api_base = normalized_license_worker_origin(api_base.trim());
         if api_base.is_empty() {
             return Ok(None);
         }
@@ -3394,8 +3395,16 @@ pub fn get_extension_pending(
 
 // ---------- License (gate + cache + Worker API) ----------
 
-/// Default license Worker URL (used when QOOTI_LICENSE_API_URL is not set).
-const DEFAULT_LICENSE_API_URL: &str = "https://qooti-license.azizbekhabibullayev74.workers.dev";
+/// Default license Worker URL when `QOOTI_LICENSE_API_URL` is unset at compile time.
+/// Split in source so the repo does not contain one obvious copy-pastable production URL; a
+/// determined analyst can still recover the endpoint from the binary or by observing HTTPS traffic.
+const DEFAULT_LICENSE_API_URL: &str = concat!(
+    "https://",
+    "qooti",
+    ".",
+    "azizbekhabibullayev74",
+    ".workers.dev"
+);
 const COMPILED_LICENSE_API_URL: Option<&str> = option_env!("QOOTI_LICENSE_API_URL");
 const LICENSE_RESPONSE_SIGNING_SECRET: Option<&str> =
     option_env!("QOOTI_LICENSE_RESPONSE_SIGNING_SECRET");
@@ -3776,13 +3785,31 @@ fn parse_license_server_response(
 
 type HmacSha256 = Hmac<Sha256>;
 
+/// Worker routes live at the **root** (`POST /license/validate`, `GET /license/status`).
+/// If `QOOTI_LICENSE_API_URL` was set with an extra path (e.g. `…/api`), requests became
+/// `…/api/license/validate` → Cloudflare HTML 404 → "non-JSON body". Strip to origin only.
+fn normalized_license_worker_origin(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let Ok(u) = Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    if u.scheme() != "http" && u.scheme() != "https" {
+        return trimmed.to_string();
+    }
+    let Some(host) = u.host_str() else {
+        return trimmed.to_string();
+    };
+    match u.port() {
+        Some(p) => format!("{}://{}:{}", u.scheme(), host, p),
+        None => format!("{}://{}", u.scheme(), host),
+    }
+}
+
 fn configured_license_api_base() -> String {
-    COMPILED_LICENSE_API_URL
+    let raw = COMPILED_LICENSE_API_URL
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or(DEFAULT_LICENSE_API_URL)
-        .trim()
-        .trim_end_matches('/')
-        .to_string()
+        .unwrap_or(DEFAULT_LICENSE_API_URL);
+    normalized_license_worker_origin(raw)
 }
 
 fn license_signature_secret() -> Option<&'static str> {
@@ -3808,6 +3835,16 @@ fn license_signature_payload(
         error.unwrap_or(""),
         if activation { "activate" } else { "status" }
     )
+}
+
+/// Transport-layer failures → `network_error` (generic "couldn't reach server" in UI).
+/// Bad JSON, HTTP shape, or HMAC mismatch → `activation_error` (show concrete `error` text).
+fn classify_license_activation_failure(err: &str) -> &'static str {
+    let e = err.trim();
+    if e.starts_with("Network error:") {
+        return "network_error";
+    }
+    "activation_error"
 }
 
 fn verify_license_server_signature(
@@ -3882,37 +3919,51 @@ fn request_license_server_check(
     device_id: &str,
     activation: bool,
 ) -> Result<LicenseServerCheck, String> {
-    let endpoint = if activation {
-        format!("{}/license/validate", api_base)
-    } else {
-        format!("{}/license/status", api_base)
-    };
+    let base = Url::parse(api_base).map_err(|e| {
+        format!(
+            "Invalid license API base URL {:?}: {}. Use an https:// URL; override at build time with QOOTI_LICENSE_API_URL.",
+            api_base, e
+        )
+    })?;
+    let connect_secs = if activation { 30 } else { 8 };
+    let total_secs = if activation { 30 } else { 8 };
     let client = reqwest::blocking::Client::builder()
-        .connect_timeout(Duration::from_secs(if activation { 8 } else { 4 }))
-        .timeout(Duration::from_secs(if activation { 15 } else { 6 }))
+        .connect_timeout(Duration::from_secs(connect_secs))
+        .timeout(Duration::from_secs(total_secs))
         .build()
         .map_err(|e| {
-            log::error!("[HTTP][license] client build failed endpoint={} err={}", endpoint, e);
+            log::error!(
+                "[HTTP][license] client build failed base={} err={}",
+                api_base,
+                e
+            );
             e.to_string()
         })?;
+    let endpoint = if activation {
+        let url = base
+            .join("/license/validate")
+            .map_err(|e| format!("Could not build /license/validate URL: {}", e))?;
+        log::info!("[activation] calling URL: {}", url);
+        url.to_string()
+    } else {
+        let mut url = base
+            .join("/license/status")
+            .map_err(|e| format!("Could not build /license/status URL: {}", e))?;
+        url.set_query(Some(&format!(
+            "license_key={}&device_fingerprint={}",
+            urlencoding::encode(license_key),
+            urlencoding::encode(device_id)
+        )));
+        url.to_string()
+    };
     let response = if activation {
         let body = serde_json::json!({
             "license_key": license_key,
             "device_fingerprint": device_id,
         });
-        client
-            .post(format!("{}/license/validate", api_base))
-            .json(&body)
-            .send()
+        client.post(&endpoint).json(&body).send()
     } else {
-        client
-            .get(format!(
-                "{}/license/status?license_key={}&device_fingerprint={}",
-                api_base,
-                urlencoding::encode(license_key),
-                urlencoding::encode(device_id)
-            ))
-            .send()
+        client.get(&endpoint).send()
     }
     .map_err(|e| {
         log::error!(
@@ -3935,15 +3986,25 @@ fn request_license_server_check(
         .json::<serde_json::Value>()
         .map_err(|e| {
             log::error!(
-                "[HTTP][license] response parse failed endpoint={} status={} err={}",
+                "[HTTP][license] response JSON parse failed endpoint={} status={} err={}",
                 endpoint,
                 http_status,
                 e
             );
-            format!("Network error: {}", e)
+            format!(
+                "License server returned non-JSON body (HTTP {}). {}",
+                http_status.as_u16(),
+                e
+            )
         })?;
     let parsed = parse_license_server_response(http_status, json.clone());
     if activation {
+        log::info!(
+            "[activation] response received — http={} valid={} status={} (verifying signature next)",
+            http_status.as_u16(),
+            parsed.valid,
+            parsed.status
+        );
         eprintln!(
             "[qooti][activation][terminal] HTTP {} POST …/license/validate → parsed: valid={} status={} plan={:?} err={:?}",
             http_status.as_u16(),
@@ -3964,7 +4025,17 @@ fn request_license_server_check(
         parsed.expires_at,
         parsed.error.as_deref(),
         activation,
-    )?;
+    )
+    .map_err(|e| {
+        log::error!(
+            "[activation] HMAC/signature step failed (device may already be registered on server) | err={}",
+            e
+        );
+        e
+    })?;
+    if activation {
+        log::info!("[activation] signature OK — activation response accepted");
+    }
     Ok(parsed)
 }
 
@@ -4087,11 +4158,21 @@ pub fn validate_license(
         api_base,
         device_id.len()
     );
+    log::info!(
+        "[activation] device fingerprint ready — POST {}/license/validate (single request registers + validates)",
+        api_base
+    );
     let server_check = match request_license_server_check(&api_base, key_trim, &device_id, true) {
         Ok(result) => result,
         Err(error) => {
+            let classified = classify_license_activation_failure(&error);
             eprintln!(
                 "[qooti][activation][terminal] request_license_server_check ERROR: {}",
+                error
+            );
+            log::error!(
+                "[activation] validate_license failed | classified={} | err={}",
+                classified,
                 error
             );
             info!("[license] validate_license: request failed: {}", error);
@@ -4099,7 +4180,7 @@ pub fn validate_license(
                 success: false,
                 plan_type: None,
                 expires_at: None,
-                status: Some("network_error".to_string()),
+                status: Some(classified.to_string()),
                 used_cached: false,
                 error: Some(error),
             });

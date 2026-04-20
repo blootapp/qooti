@@ -1,16 +1,21 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "qooti",
+  "main": "worker/src/index.js",
   "compatibility_date": "2025-09-27",
   "observability": {
     "enabled": true
   },
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "admin"
   },
-  "compatibility_flags": [
-    "nodejs_compat"
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "qooti",
+      "database_id": "45d1a962-341a-4852-954b-5a5dae9a85cc",
+      "migrations_dir": "worker/migrations"
+    }
   ]
 }
-
-

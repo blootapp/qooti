@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self' https://www.youtube.com https://www.youtube.com/iframe_api; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https: blob: http://asset.localhost https://asset.localhost; connect-src 'self' https://qooti-license.azizbekhabibullayev74.workers.dev https://raw.githubusercontent.com https://github.com https://api.telegram.org https://www.notion.so https://i.ytimg.com; media-src 'self' asset: data: https: blob: http://asset.localhost https://asset.localhost; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'",
+      "csp": "default-src 'self'; script-src 'self' https://www.youtube.com https://www.youtube.com/iframe_api; style-src 'self' 'unsafe-inline'; img-src 'self' asset: data: https: blob: http://asset.localhost https://asset.localhost; connect-src 'self' https://*.workers.dev https://raw.githubusercontent.com https://github.com https://api.telegram.org https://www.notion.so https://i.ytimg.com; media-src 'self' asset: data: https: blob: http://asset.localhost https://asset.localhost; frame-src 'self' https://www.youtube.com https://www.youtube-nocookie.com; object-src 'none'; frame-ancestors 'none'",
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/**", "$HOME/**", "$TEMP/**"]
@@ -59,12 +59,9 @@
     ],
     "resources": [
       "resources/yt-dlp*",
-      "../assets/logo.png",
-      "../assets/qooti-pack-icon.png",
-      "../assets/qooti-pack-icon.ico",
-      "../assets/icons/flaticon/*",
-      "../src/assets/ocr/*",
-      "../src/assets/ocr/models/*"
+      "../assets/**/*",
+      "../src/assets/**/*",
+      "../src/vendor/**/*"
     ],
     "macOS": {
       "minimumSystemVersion": "10.15",

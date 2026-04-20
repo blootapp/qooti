@@ -1,3 +1,7 @@
+# Deploy the live `qooti` worker (API + admin assets) from the **repo root**:
+#   npx wrangler deploy
+# Root `wrangler.jsonc` sets `main` + `assets` + D1. Deploying only from this folder targets
+# the `qooti-license` name below and does not update the `qooti` workers.dev host by default.
 name = "qooti-license"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
