@@ -46,6 +46,53 @@ if (!window.qooti) {
 const $ = (sel) => document.querySelector(sel);
 const DEFAULT_UNSORTED_COLLECTION_ID = "qooti-unsorted-default";
 
+/**
+ * WebView compatibility fallback:
+ * Some production runtimes fail to apply mask-image when URL is provided via
+ * CSS var(), e.g. -webkit-mask-image: var(--icon-url). We keep existing markup
+ * and mirror --icon-url into direct mask-image properties at runtime.
+ */
+function applyMaskIconFallback(el) {
+  if (!el || !el.classList?.contains("ui-icon")) return;
+  const inlineIconUrl = String(el.style?.getPropertyValue("--icon-url") || "").trim();
+  const resolvedIconUrl = inlineIconUrl || String(getComputedStyle(el).getPropertyValue("--icon-url") || "").trim();
+  if (!resolvedIconUrl) return;
+  el.style.webkitMaskImage = resolvedIconUrl;
+  el.style.maskImage = resolvedIconUrl;
+}
+
+function applyMaskIconFallbackWithin(root = document) {
+  if (!root?.querySelectorAll) return;
+  root.querySelectorAll(".ui-icon").forEach((el) => applyMaskIconFallback(el));
+}
+
+function startMaskIconFallbackObserver() {
+  applyMaskIconFallbackWithin(document);
+  if (!document?.body || typeof MutationObserver !== "function") return;
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.type === "attributes" && mutation.target instanceof Element) {
+        applyMaskIconFallback(mutation.target);
+        continue;
+      }
+      if (mutation.type !== "childList") continue;
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (node.classList?.contains("ui-icon")) applyMaskIconFallback(node);
+        applyMaskIconFallbackWithin(node);
+      }
+    }
+  });
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["style", "class"],
+  });
+}
+
+startMaskIconFallbackObserver();
+
 /** Strengthen home-feed recommendations after items are added to a collection (uses tags + type on the item). */
 function recordEngagementAfterCollectionAdd(itemOrIds) {
   if (Array.isArray(itemOrIds)) {
